@@ -7,6 +7,16 @@ The package focuses on reusable subscription plumbing: creating hosted or embedd
 > [!WARNING]
 > This package is under active development and targets a first v1 surface. It currently supports normal Nets subscriptions. Unscheduled subscriptions, one-time checkout helpers, and bulk subscription charges are deferred.
 
+## Documentation
+
+- [Installation](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [Checkouts](docs/checkouts.md)
+- [Webhooks](docs/webhooks.md)
+- [Subscriptions and Renewals](docs/subscriptions-and-renewals.md)
+- [Testing](docs/testing.md)
+- [Upgrading](docs/upgrading.md)
+
 ## Version Support
 
 Laravel Cashier Nets supports PHP `^8.1` and Laravel `10.x`, `11.x`, `12.x`, and `13.x`. The test matrix follows Laravel's own PHP requirements, so Laravel 10 is tested on PHP 8.1-8.3, Laravel 11 on PHP 8.2-8.4, Laravel 12 on PHP 8.2-8.5, and Laravel 13 on PHP 8.3-8.5.
@@ -26,8 +36,6 @@ php artisan vendor:publish --tag="cashier-nets-config"
 php artisan vendor:publish --tag="cashier-nets-migrations"
 php artisan migrate
 ```
-
-## Configuration
 
 Add your Nets credentials and environment settings to `.env`:
 
@@ -129,6 +137,8 @@ if ($subscription?->pastDue()) {
 
 The package stores amounts in minor currency units. For example, `9900` is `99.00 DKK`.
 
+See [Subscriptions and Renewals](docs/subscriptions-and-renewals.md) for state helpers, middleware examples, transactions, retry behavior, and scheduled renewal charging.
+
 ## Webhooks
 
 By default, the package registers a webhook endpoint at:
@@ -148,6 +158,9 @@ The v1 webhook handler processes:
 - `payment.reservation.failed`
 
 For local development, expose your Laravel app with a secure HTTPS tunnel such as Ngrok, Expose, or Laravel Herd share, because Nexi requires HTTPS webhook endpoints.
+
+> [!IMPORTANT]
+> Exclude the webhook route from Laravel CSRF protection, for example `nets/*` when using the default route prefix. See [Webhooks](docs/webhooks.md) for production setup, package events, idempotency, and troubleshooting.
 
 ## Renewals
 
@@ -195,21 +208,18 @@ CashierNets::assertWebhookReceived();
 CashierNets::assertWebhookHandled();
 ```
 
-## Custom Models
+## Production Checklist
 
-You may extend the package models and assign your custom classes during application boot:
+Before enabling live billing:
 
-```php
-use App\Models\Billing\Subscription;
-use App\Models\Billing\Transaction;
-use Udviklr\CashierNets\CashierNets;
-
-public function boot(): void
-{
-    CashierNets::$subscriptionModel = Subscription::class;
-    CashierNets::$transactionModel = Transaction::class;
-}
-```
+- Set live `NETS_SECRET_KEY` and `NETS_CHECKOUT_KEY`.
+- Set `NETS_SANDBOX=false`.
+- Set a high-entropy `NETS_WEBHOOK_AUTHORIZATION` value.
+- Ensure your public `APP_URL` is HTTPS and resolves to the application.
+- Exclude the package webhook route from Laravel CSRF protection.
+- Confirm Nexi can reach `/nets/webhook`, or your configured webhook path.
+- Schedule `cashier-nets:charge-due` if the app should charge renewals.
+- Run a sandbox checkout and webhook test before switching credentials.
 
 ## Local Development
 
@@ -229,7 +239,16 @@ NETS_CHECKOUT_KEY=your-sandbox-checkout-key \
 composer test:integration
 ```
 
-Optional overrides are available for `NETS_TEST_AMOUNT`, `NETS_TEST_CURRENCY`, `NETS_TEST_END_DATE`, `NETS_TEST_RETURN_URL`, `NETS_TEST_CANCEL_URL`, `NETS_TEST_CHECKOUT_URL`, and `NETS_TEST_TERMS_URL`.
+Renewal charge coverage is available as an explicit opt-in because it creates real sandbox charge attempts against an existing active Nets subscription:
+
+```shell
+NETS_INTEGRATION=true \
+NETS_SECRET_KEY=your-sandbox-secret-key \
+NETS_TEST_SUBSCRIPTION_ID=active-sandbox-subscription-id \
+composer test:integration:charges
+```
+
+See [Testing](docs/testing.md) for fake helpers, webhook assertions, and integration test overrides.
 
 ## License
 

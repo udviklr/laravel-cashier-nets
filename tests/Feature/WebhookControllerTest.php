@@ -64,6 +64,29 @@ class WebhookControllerTest extends TestCase
         Event::assertDispatched(WebhookHandled::class);
     }
 
+    public function test_it_records_subscription_identifiers_from_payment_created_webhooks(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'status' => Subscription::STATUS_PENDING,
+        ]);
+
+        $this->postJson('/nets/webhook', $this->paymentCreatedPayload())
+            ->assertOk()
+            ->assertJson(['received' => true]);
+
+        $subscription->refresh();
+
+        $this->assertSame(Subscription::STATUS_PENDING, $subscription->status);
+        $this->assertSame('sub_123', $subscription->nets_subscription_id);
+
+        $this->assertDatabaseHas('nets_webhook_events', [
+            'nets_event_id' => 'evt_payment_created',
+            'event_name' => 'payment.created',
+        ]);
+    }
+
     public function test_it_handles_duplicate_webhooks_idempotently(): void
     {
         $subscription = $this->createSubscription([
@@ -106,6 +129,40 @@ class WebhookControllerTest extends TestCase
         ]);
     }
 
+    public function test_it_handles_legacy_charge_created_webhooks(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_PAST_DUE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-04-30T05:04:00Z'),
+            'failed_at' => Carbon::parse('2026-04-29T05:04:00Z'),
+        ]);
+
+        $this->postJson('/nets/webhook', $this->chargeCreatedPayload('payment.charge.created', 'evt_charge_created_legacy'))
+            ->assertOk()
+            ->assertJson(['received' => true]);
+
+        $subscription->refresh();
+
+        $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->status);
+        $this->assertNull($subscription->failed_at);
+        $this->assertSame('2026-05-30 05:04:00', $subscription->next_charge_at?->setTimezone('UTC')->format('Y-m-d H:i:s'));
+
+        $this->assertDatabaseHas('nets_transactions', [
+            'nets_payment_id' => 'pay_123',
+            'nets_charge_id' => 'charge_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Transaction::STATUS_SUCCEEDED,
+            'amount' => 9900,
+            'currency' => 'DKK',
+        ]);
+    }
+
     public function test_it_marks_the_subscription_past_due_when_payment_reservation_fails(): void
     {
         $subscription = $this->createSubscription([
@@ -132,6 +189,61 @@ class WebhookControllerTest extends TestCase
             'currency' => 'DKK',
             'failure_code' => 'DECLINED',
             'failure_message' => 'Card was declined.',
+        ]);
+    }
+
+    public function test_it_marks_the_subscription_past_due_when_charge_failed_v2_webhooks_are_received(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+        ]);
+
+        $this->postJson('/nets/webhook', $this->chargeFailedPayload())->assertOk();
+
+        $subscription->refresh();
+
+        $this->assertSame(Subscription::STATUS_PAST_DUE, $subscription->status);
+        $this->assertSame('2026-04-30 05:04:00', $subscription->failed_at?->setTimezone('UTC')->format('Y-m-d H:i:s'));
+
+        $this->assertDatabaseHas('nets_transactions', [
+            'nets_payment_id' => 'pay_123',
+            'nets_charge_id' => 'charge_failed_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Transaction::STATUS_FAILED,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'failure_code' => 'DECLINED',
+            'failure_message' => 'Charge was declined.',
+        ]);
+    }
+
+    public function test_it_marks_the_subscription_past_due_when_legacy_charge_failed_webhooks_are_received(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+        ]);
+
+        $this->postJson('/nets/webhook', $this->chargeFailedPayload('payment.charge.failed', 'evt_charge_failed_legacy'))->assertOk();
+
+        $subscription->refresh();
+
+        $this->assertSame(Subscription::STATUS_PAST_DUE, $subscription->status);
+        $this->assertDatabaseHas('nets_transactions', [
+            'nets_payment_id' => 'pay_123',
+            'nets_charge_id' => 'charge_failed_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Transaction::STATUS_FAILED,
+            'failure_code' => 'DECLINED',
         ]);
     }
 
@@ -178,15 +290,35 @@ class WebhookControllerTest extends TestCase
     }
 
     /**
+     * Get a payment.created webhook payload.
+     *
+     * @return array<string, mixed>
+     */
+    protected function paymentCreatedPayload(): array
+    {
+        return [
+            'id' => 'evt_payment_created',
+            'event' => 'payment.created',
+            'timestamp' => '2026-04-30T05:04:00.4451+00:00',
+            'merchantId' => 100242833,
+            'merchantNumber' => 0,
+            'data' => [
+                'paymentId' => 'pay_123',
+                'subscriptionId' => 'sub_123',
+            ],
+        ];
+    }
+
+    /**
      * Get a payment.charge.created.v2 webhook payload.
      *
      * @return array<string, mixed>
      */
-    protected function chargeCreatedPayload(): array
+    protected function chargeCreatedPayload(string $event = 'payment.charge.created.v2', string $id = 'evt_charge_created'): array
     {
         return [
-            'id' => 'evt_charge_created',
-            'event' => 'payment.charge.created.v2',
+            'id' => $id,
+            'event' => $event,
             'timestamp' => '2026-04-30T05:04:00.4502+00:00',
             'merchantId' => 0,
             'merchantNumber' => 100242833,
@@ -195,6 +327,35 @@ class WebhookControllerTest extends TestCase
                 'chargeId' => 'charge_123',
                 'subscriptionId' => 'sub_123',
                 'reconciliationReference' => 'MRJhJvEDCx1y7uWlKfb6O3z78',
+                'amount' => [
+                    'amount' => '9900',
+                    'currency' => 'DKK',
+                ],
+            ],
+        ];
+    }
+
+    /**
+     * Get a payment.charge.failed.v2 webhook payload.
+     *
+     * @return array<string, mixed>
+     */
+    protected function chargeFailedPayload(string $event = 'payment.charge.failed.v2', string $id = 'evt_charge_failed'): array
+    {
+        return [
+            'id' => $id,
+            'event' => $event,
+            'timestamp' => '2026-04-30T05:04:00.4503+00:00',
+            'merchantId' => 0,
+            'merchantNumber' => 100242833,
+            'data' => [
+                'paymentId' => 'pay_123',
+                'chargeId' => 'charge_failed_123',
+                'subscriptionId' => 'sub_123',
+                'error' => [
+                    'code' => 'DECLINED',
+                    'message' => 'Charge was declined.',
+                ],
                 'amount' => [
                     'amount' => '9900',
                     'currency' => 'DKK',

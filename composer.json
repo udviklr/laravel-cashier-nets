@@ -55,6 +55,7 @@
         "prepare": "@php vendor/bin/testbench package:discover --ansi",
         "test": "@php vendor/bin/phpunit --exclude-group integration",
         "test:integration": "@php vendor/bin/phpunit --group integration",
+        "test:integration:charges": "@php vendor/bin/phpunit --group nets-charge",
         "analyse": "@php vendor/bin/phpstan analyse --debug --ansi"
     },
     "config": {
