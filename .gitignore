@@ -1,0 +1,12 @@
+_private/
+/vendor/
+/.phpunit.cache/
+/composer.phar
+.codex/
+.mcp.json
+AGENTS.md
+CLAUDE.md
+.ai/
+.agents/
+.idea/
+composer.lock

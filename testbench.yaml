@@ -1,0 +1,8 @@
+providers:
+  - Udviklr\CashierNets\CashierNetsServiceProvider
+
+migrations:
+  - database/migrations
+
+workbench:
+  install: true
