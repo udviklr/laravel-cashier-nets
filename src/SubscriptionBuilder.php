@@ -315,6 +315,10 @@ class SubscriptionBuilder
         if ($this->integrationType === self::EMBEDDED_CHECKOUT && $this->checkoutUrl === null) {
             throw new InvalidArgumentException('A checkout URL is required.');
         }
+
+        if ($this->endDate === null) {
+            throw new InvalidArgumentException('A subscription end date is required.');
+        }
     }
 
     /**

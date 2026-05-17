@@ -34,6 +34,7 @@ class NetsSandboxCheckoutTest extends TestCase
             ->returnUrl($this->urlFromEnv('NETS_TEST_RETURN_URL', 'https://example.com/billing/return'))
             ->cancelUrl($this->urlFromEnv('NETS_TEST_CANCEL_URL', 'https://example.com/billing/cancel'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
+            ->endDate($this->testEndDate())
             ->checkout();
 
         $this->assertNotSame('', $checkout->paymentId());
@@ -70,6 +71,7 @@ class NetsSandboxCheckoutTest extends TestCase
             ->reference($reference)
             ->checkoutUrl($this->urlFromEnv('NETS_TEST_CHECKOUT_URL', 'https://example.com/billing/checkout'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
+            ->endDate($this->testEndDate())
             ->embeddedCheckout();
 
         $this->assertNotSame('', $checkout->paymentId());
@@ -138,6 +140,11 @@ class NetsSandboxCheckoutTest extends TestCase
     protected function testCurrency(): string
     {
         return strtoupper((string) (getenv('NETS_TEST_CURRENCY') ?: 'DKK'));
+    }
+
+    protected function testEndDate(): string
+    {
+        return $this->env('NETS_TEST_END_DATE') ?? now()->addYear()->toRfc3339String();
     }
 
     protected function testReference(string $suffix): string

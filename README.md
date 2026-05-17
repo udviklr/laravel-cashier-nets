@@ -70,6 +70,7 @@ Route::get('/subscribe', function (Request $request) {
         ->description('Pro plan')
         ->returnUrl(route('billing.return'))
         ->termsUrl(route('terms'))
+        ->endDate(now()->addYear())
         ->hostedCheckout();
 
     return $checkout->redirect();
@@ -95,6 +96,7 @@ Route::get('/billing/checkout-session', function (Request $request) {
         ->description('Pro plan')
         ->checkoutUrl(route('billing.checkout'))
         ->termsUrl(route('terms'))
+        ->endDate(now()->addYear())
         ->embeddedCheckout();
 
     return response()->json([
@@ -106,6 +108,8 @@ Route::get('/billing/checkout-session', function (Request $request) {
 ```
 
 Your application is responsible for rendering the embedded checkout page with Nexi's Checkout JS SDK. This keeps the package frontend-agnostic for Blade, Livewire, Inertia, Vue, React, or other stacks.
+
+Nets requires an `endDate` when creating a subscription. The package exposes this through `endDate()`, which accepts a `CarbonInterface`, `DateTimeInterface`, or date string.
 
 ## Subscription State
 
@@ -225,7 +229,7 @@ NETS_CHECKOUT_KEY=your-sandbox-checkout-key \
 composer test:integration
 ```
 
-Optional overrides are available for `NETS_TEST_AMOUNT`, `NETS_TEST_CURRENCY`, `NETS_TEST_RETURN_URL`, `NETS_TEST_CANCEL_URL`, `NETS_TEST_CHECKOUT_URL`, and `NETS_TEST_TERMS_URL`.
+Optional overrides are available for `NETS_TEST_AMOUNT`, `NETS_TEST_CURRENCY`, `NETS_TEST_END_DATE`, `NETS_TEST_RETURN_URL`, `NETS_TEST_CANCEL_URL`, `NETS_TEST_CHECKOUT_URL`, and `NETS_TEST_TERMS_URL`.
 
 ## License
 

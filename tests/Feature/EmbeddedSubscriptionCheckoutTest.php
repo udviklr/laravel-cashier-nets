@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\URL;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
@@ -45,6 +46,7 @@ class EmbeddedSubscriptionCheckoutTest extends TestCase
             ->reference('pro-plan')
             ->checkoutUrl('https://example.com/billing/checkout')
             ->termsUrl('https://example.com/terms')
+            ->endDate(Carbon::parse('2027-01-01T00:00:00Z'))
             ->metadata(['plan' => 'pro'])
             ->embeddedCheckout();
 
@@ -82,6 +84,7 @@ class EmbeddedSubscriptionCheckoutTest extends TestCase
         $this->assertSame(9900, $payload['order']['amount']);
         $this->assertSame('DKK', $payload['order']['currency']);
         $this->assertSame(30, $payload['subscription']['interval']);
+        $this->assertSame('2027-01-01T00:00:00+00:00', $payload['subscription']['endDate']);
     }
 
     public function test_an_embedded_checkout_requires_a_checkout_url(): void

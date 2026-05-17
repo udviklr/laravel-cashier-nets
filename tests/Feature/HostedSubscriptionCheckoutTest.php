@@ -47,6 +47,7 @@ class HostedSubscriptionCheckoutTest extends TestCase
             ->returnUrl('https://example.com/billing/return')
             ->cancelUrl('https://example.com/billing/cancel')
             ->termsUrl('https://example.com/terms')
+            ->endDate(Carbon::parse('2027-01-01T00:00:00Z'))
             ->metadata(['plan' => 'pro'])
             ->checkout();
 
@@ -83,8 +84,26 @@ class HostedSubscriptionCheckoutTest extends TestCase
         $this->assertSame('DKK', $payload['order']['currency']);
         $this->assertSame('pro-plan', $payload['order']['items'][0]['reference']);
         $this->assertSame(30, $payload['subscription']['interval']);
+        $this->assertSame('2027-01-01T00:00:00+00:00', $payload['subscription']['endDate']);
         $this->assertSame('https://example.com/nets/webhook', $payload['notifications']['webHooks'][0]['url']);
         $this->assertSame('webhook-secret', $payload['notifications']['webHooks'][0]['authorization']);
+    }
+
+    public function test_a_subscription_checkout_requires_an_end_date(): void
+    {
+        $user = User::create([
+            'name' => 'Taylor Otwell',
+            'email' => 'taylor@example.com',
+            'password' => 'secret',
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('A subscription end date is required.');
+
+        $user->newNetsSubscription()
+            ->amount(5000)
+            ->returnUrl('https://example.com/return')
+            ->checkout();
     }
 
     public function test_subscription_checkout_can_request_an_initial_charge_and_end_date(): void
