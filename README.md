@@ -1,5 +1,9 @@
 # Laravel Cashier Nets
 
+[![Latest Version on Packagist](https://img.shields.io/packagist/v/udviklr/laravel-cashier-nets.svg)](https://packagist.org/packages/udviklr/laravel-cashier-nets)
+[![Total Downloads](https://img.shields.io/packagist/dt/udviklr/laravel-cashier-nets.svg)](https://packagist.org/packages/udviklr/laravel-cashier-nets)
+[![License](https://img.shields.io/packagist/l/udviklr/laravel-cashier-nets.svg)](LICENSE.md)
+
 Laravel Cashier Nets provides a Cashier-inspired interface for Nets Easy / Nexi Checkout subscription billing in Laravel applications.
 
 The package focuses on reusable subscription plumbing: creating hosted or embedded checkout sessions, storing local subscription state, processing payment webhooks, charging due subscriptions, and faking provider calls in tests.
