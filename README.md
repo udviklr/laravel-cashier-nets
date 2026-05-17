@@ -6,6 +6,9 @@
 
 Laravel Cashier Nets provides a Cashier-inspired interface for Nets Easy / Nexi Checkout subscription billing in Laravel applications.
 
+> [!IMPORTANT]
+> This package is an unofficial, community-maintained integration. It is not affiliated with, endorsed by, or sponsored by Laravel, Laravel LLC, Nets, or Nexi. Laravel, Laravel Cashier, Nets, and Nexi are trademarks of their respective owners.
+
 The package focuses on reusable subscription plumbing: creating hosted or embedded checkout sessions, storing local subscription state, processing payment webhooks, charging due subscriptions, and faking provider calls in tests.
 
 > [!NOTE]
