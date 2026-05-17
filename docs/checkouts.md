@@ -19,6 +19,7 @@ Route::get('/subscribe', function (Request $request) {
         ->intervalDays(30)
         ->description('Pro plan')
         ->reference('pro-plan')
+        ->myReference('INV-2026-000123')
         ->returnUrl(route('billing.return'))
         ->cancelUrl(route('billing.cancel'))
         ->termsUrl(route('terms'))
@@ -46,6 +47,7 @@ Route::get('/billing/checkout-session', function (Request $request) {
         ->currency('DKK')
         ->intervalDays(30)
         ->description('Pro plan')
+        ->merchantHandlesConsumerData()
         ->checkoutUrl(route('billing.checkout'))
         ->termsUrl(route('terms'))
         ->endDate(now()->addYear())
@@ -89,15 +91,24 @@ The subscription builder supports:
 | `intervalDays(int $days)` | Minimum interval between recurring charges, default `30`. |
 | `description(string $description)` | Checkout/order item description. |
 | `reference(string $reference)` | Order reference sent to Nets. |
+| `myReference(string $reference)` | Merchant payment reference sent to Nets. |
+| `merchantReference(string $reference)` | Alias for `myReference()`. |
 | `returnUrl(string $url)` | Required for hosted checkout. |
 | `cancelUrl(string $url)` | Optional hosted checkout cancel URL. |
 | `checkoutUrl(string $url)` | Required for embedded checkout. |
 | `termsUrl(string $url)` | Optional terms URL. |
+| `merchantHandlesConsumerData(bool $enabled = true)` | Ask Nets checkout to hide consumer/name/address fields when the app handles billing identity. |
 | `endDate(...)` | Required Nets subscription end date. |
 | `chargeImmediately(bool $charge = true)` | Ask Nets to charge during checkout creation. |
 | `metadata(array $metadata)` | Store local metadata on the subscription record. |
 
 Nets requires an `endDate` when creating a subscription. The method accepts a `CarbonInterface`, `DateTimeInterface`, or date string.
+
+Nets subscriptions use day-based intervals. For example, `intervalDays(30)` is a 30-day billing interval, not a calendar month. If your application stores its own local billing or access period, calculate it from the same interval days value you pass to Cashier Nets so it stays aligned with `nets_subscriptions.next_charge_at`.
+
+Use `reference()` for the order reference and `myReference()` / `merchantReference()` for your own accounting or invoice reference. Nexi limits `myReference` to 36 characters. Nexi exposes `invoiceNumber` in response data for some payment/charge details, but the package does not treat `invoiceNumber` as a guaranteed create-payment input.
+
+Use `merchantHandlesConsumerData()` when your SaaS app collects billing identity itself, such as billing name, VAT, CVR, or invoice details. This sends `checkout.merchantHandlesConsumerData` to Nets. Nets may hide invoice or installment payment methods if full consumer data is not supplied to checkout.
 
 ## Local Subscription Records
 

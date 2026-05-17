@@ -27,6 +27,7 @@ class NetsSandboxCheckoutTest extends TestCase
 
         $user = $this->createBillableUser();
         $reference = $this->testReference('hosted');
+        $myReference = $this->testMerchantReference('hosted');
 
         $checkout = $user->newNetsSubscription('integration-hosted')
             ->amount($this->testAmount())
@@ -34,6 +35,7 @@ class NetsSandboxCheckoutTest extends TestCase
             ->intervalDays(30)
             ->description('Cashier Nets sandbox hosted subscription')
             ->reference($reference)
+            ->myReference($myReference)
             ->returnUrl($this->urlFromEnv('NETS_TEST_RETURN_URL', 'https://example.com/billing/return'))
             ->cancelUrl($this->urlFromEnv('NETS_TEST_CANCEL_URL', 'https://example.com/billing/cancel'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
@@ -53,11 +55,13 @@ class NetsSandboxCheckoutTest extends TestCase
             'amount' => $this->testAmount(),
             'currency' => $this->testCurrency(),
         ]);
+        $this->assertSame($myReference, $checkout->subscription()?->metadata['my_reference']);
 
         $payment = CashierNets::api('GET', 'v1/payments/'.$checkout->paymentId())->json();
 
         $this->assertSame($checkout->paymentId(), data_get($payment, 'payment.paymentId', data_get($payment, 'paymentId')));
         $this->assertRetrievedPaymentMatchesCheckout($payment, $checkout->paymentId(), $reference);
+        $this->assertRetrievedPaymentMyReference($payment, $myReference);
         $this->assertPaymentCheckoutUrl($payment, $checkout->url());
     }
 
@@ -67,6 +71,7 @@ class NetsSandboxCheckoutTest extends TestCase
 
         $user = $this->createBillableUser();
         $reference = $this->testReference('embedded');
+        $myReference = $this->testMerchantReference('embedded');
 
         $checkout = $user->newNetsSubscription('integration-embedded')
             ->amount($this->testAmount())
@@ -74,6 +79,7 @@ class NetsSandboxCheckoutTest extends TestCase
             ->intervalDays(30)
             ->description('Cashier Nets sandbox embedded subscription')
             ->reference($reference)
+            ->merchantReference($myReference)
             ->checkoutUrl($this->urlFromEnv('NETS_TEST_CHECKOUT_URL', 'https://example.com/billing/checkout'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
             ->endDate($this->testEndDate())
@@ -97,6 +103,7 @@ class NetsSandboxCheckoutTest extends TestCase
 
         $this->assertSame($checkout->paymentId(), data_get($payment, 'payment.paymentId', data_get($payment, 'paymentId')));
         $this->assertRetrievedPaymentMatchesCheckout($payment, $checkout->paymentId(), $reference);
+        $this->assertRetrievedPaymentMyReference($payment, $myReference);
         $this->assertPaymentCheckoutUrl($payment, $this->urlFromEnv('NETS_TEST_CHECKOUT_URL', 'https://example.com/billing/checkout'));
     }
 
@@ -227,6 +234,7 @@ class NetsSandboxCheckoutTest extends TestCase
         $user = $this->createBillableUser();
         $idempotencyKey = 'cashier-nets-charge-'.Str::uuid();
         $reference = $this->testReference('charge');
+        $myReference = $this->testMerchantReference('charge');
 
         $subscription = $user->netsSubscriptions()->create([
             'type' => 'integration-charge',
@@ -241,6 +249,7 @@ class NetsSandboxCheckoutTest extends TestCase
         $transaction = $subscription->charge([
             'description' => 'Cashier Nets sandbox subscription charge',
             'reference' => $reference,
+            'my_reference' => $myReference,
             'idempotency_key' => $idempotencyKey,
         ]);
 
@@ -252,6 +261,7 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->assertSame($this->testAmount(), $transaction->amount);
         $this->assertSame($this->testCurrency(), $transaction->currency);
         $this->assertNotSame('', (string) $transaction->nets_payment_id);
+        $this->assertSame($myReference, $transaction->metadata['my_reference']);
 
         $payment = CashierNets::api('GET', 'v1/payments/'.$transaction->nets_payment_id)->json();
 
@@ -259,6 +269,13 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->assertSame($this->testAmount(), (int) data_get($payment, 'payment.orderDetails.amount'));
         $this->assertSame($this->testCurrency(), data_get($payment, 'payment.orderDetails.currency'));
         $this->assertSame($reference, data_get($payment, 'payment.orderDetails.reference'));
+        $this->assertRetrievedPaymentMyReference($payment, $myReference);
+
+        $invoiceNumber = $this->paymentInvoiceNumber($payment);
+
+        if ($invoiceNumber !== null) {
+            $this->assertSame($invoiceNumber, $transaction->metadata['invoice_number'] ?? null);
+        }
     }
 
     protected function configureNetsSandbox(bool $requireCheckoutKey = false, bool $enableWebhooks = false): void
@@ -359,6 +376,66 @@ class NetsSandboxCheckoutTest extends TestCase
         }
     }
 
+    /**
+     * Assert that Nets persisted the merchant payment reference.
+     *
+     * @param  array<string, mixed>  $payment
+     */
+    protected function assertRetrievedPaymentMyReference(array $payment, string $expected): void
+    {
+        $actual = $this->paymentMyReference($payment);
+
+        $this->assertSame($expected, $actual, 'Nets did not return the expected myReference. Payment payload: '.json_encode($payment));
+    }
+
+    /**
+     * Read myReference from known Nets payment response shapes.
+     *
+     * @param  array<string, mixed>  $payment
+     */
+    protected function paymentMyReference(array $payment): ?string
+    {
+        foreach ([
+            'payment.myReference',
+            'payment.myreference',
+            'payment.my_reference',
+            'myReference',
+        ] as $path) {
+            $value = data_get($payment, $path);
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return trim((string) $value);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Read invoiceNumber from known Nets payment response shapes.
+     *
+     * @param  array<string, mixed>  $payment
+     */
+    protected function paymentInvoiceNumber(array $payment): ?string
+    {
+        foreach ([
+            'payment.invoiceNumber',
+            'payment.invoice.invoiceNumber',
+            'payment.paymentDetails.invoiceDetails.invoiceNumber',
+            'payment.charge.invoiceNumber',
+            'payment.orderDetails.invoiceNumber',
+            'invoiceNumber',
+        ] as $path) {
+            $value = data_get($payment, $path);
+
+            if (is_scalar($value) && trim((string) $value) !== '') {
+                return trim((string) $value);
+            }
+        }
+
+        return null;
+    }
+
     protected function testAmount(): int
     {
         return (int) (getenv('NETS_TEST_AMOUNT') ?: 1000);
@@ -377,6 +454,11 @@ class NetsSandboxCheckoutTest extends TestCase
     protected function testReference(string $suffix): string
     {
         return 'cashier-nets-'.$suffix.'-'.Str::uuid();
+    }
+
+    protected function testMerchantReference(string $suffix): string
+    {
+        return 'cn-'.$suffix.'-'.Str::lower(Str::random(12));
     }
 
     protected function urlFromEnv(string $key, string $default): string

@@ -167,12 +167,13 @@ class WebhookHandler
             'failure_code' => $status === Transaction::STATUS_FAILED ? $this->stringValue(Arr::get($rawPayload, 'data.error.code')) : null,
             'failure_message' => $status === Transaction::STATUS_FAILED ? $this->stringValue(Arr::get($rawPayload, 'data.error.message')) : null,
             'billed_at' => $occurredAt,
-            'metadata' => [
+            'metadata' => array_merge($transaction->metadata ?? [], array_filter([
                 'webhook_event_id' => $payload->eventId(),
                 'webhook_event_name' => $payload->eventName(),
                 'reconciliation_reference' => $this->stringValue(Arr::get($rawPayload, 'data.reconciliationReference')),
                 'my_reference' => $this->stringValue(Arr::get($rawPayload, 'data.myReference')),
-            ],
+                'invoice_number' => $this->invoiceNumber($rawPayload),
+            ], fn (?string $value): bool => $value !== null)),
         ])->save();
 
         return $transaction;
@@ -264,5 +265,30 @@ class WebhookHandler
         $value = trim((string) $value);
 
         return $value === '' ? null : $value;
+    }
+
+    /**
+     * Extract a provider invoice number from known Nets payload shapes.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function invoiceNumber(array $payload): ?string
+    {
+        foreach ([
+            'data.invoiceNumber',
+            'data.invoice.invoiceNumber',
+            'data.charge.invoiceNumber',
+            'data.payment.invoiceNumber',
+            'data.payment.paymentDetails.invoiceDetails.invoiceNumber',
+            'data.order.invoiceNumber',
+        ] as $path) {
+            $value = $this->stringValue(Arr::get($payload, $path));
+
+            if ($value !== null) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 }

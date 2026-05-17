@@ -94,7 +94,7 @@ NETS_CHECKOUT_KEY=your-sandbox-checkout-key \
 composer test:integration
 ```
 
-The default integration suite creates hosted and embedded sandbox subscription payments, retrieves them from Nets, verifies order and checkout details, verifies webhook notification payloads, verifies initial-charge checkout creation, and checks that failed Nets responses are surfaced as package exceptions.
+The default integration suite creates hosted and embedded sandbox subscription payments, retrieves them from Nets, verifies order and checkout details, verifies that `myReference` merchant references were persisted by Nets, verifies webhook notification payloads, verifies initial-charge checkout creation, and checks that failed Nets responses are surfaced as package exceptions.
 
 Optional overrides:
 
@@ -116,3 +116,5 @@ NETS_SECRET_KEY=your-sandbox-secret-key \
 NETS_TEST_SUBSCRIPTION_ID=active-sandbox-subscription-id \
 composer test:integration:charges
 ```
+
+The charge integration test also sends `my_reference`, retrieves the returned Nets payment, and verifies that Nets persisted `myReference`. If the retrieved payment contains an `invoiceNumber`, the test also checks that it matches the transaction metadata stored by the package.

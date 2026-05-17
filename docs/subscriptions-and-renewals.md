@@ -55,7 +55,9 @@ $due = Subscription::query()->dueForCharge()->get();
 
 ## Charging Due Subscriptions
 
-The package owns local renewal scheduling through `nets_subscriptions.next_charge_at`. Charge due subscriptions with:
+The package owns local renewal scheduling through `nets_subscriptions.next_charge_at`. Nets subscriptions use day-based intervals. For example, `intervalDays(30)` is a 30-day billing interval, not a calendar month. If your application stores its own local billing or access period, calculate it from the same interval days value you pass to Cashier Nets so it stays aligned with `nets_subscriptions.next_charge_at`.
+
+Charge due subscriptions with:
 
 ```shell
 php artisan cashier-nets:charge-due
@@ -93,6 +95,7 @@ $transaction = $user->netsSubscription('default')->charge([
     'currency' => 'DKK',
     'description' => 'Pro plan renewal',
     'reference' => 'pro-plan-renewal',
+    'my_reference' => 'INV-2026-000124',
     'idempotency_key' => 'subscription-123-2026-05',
     'metadata' => [
         'plan' => 'pro',
@@ -101,6 +104,8 @@ $transaction = $user->netsSubscription('default')->charge([
 ```
 
 The subscription must have a Nets subscription ID and must not be canceled, expired, or paused.
+
+Use `reference` for the order reference and `my_reference` or `merchant_reference` for your merchant payment reference. Nexi limits `myReference` to 36 characters. The package sends the value to Nets as `myReference` in the subscription charge request. Any returned `invoiceNumber` is stored on transaction metadata as `invoice_number`.
 
 ## Transactions
 
@@ -132,4 +137,3 @@ $transaction->amount();
 Failed charge attempts mark the subscription `past_due` and store failure details. The package blocks retries for configured non-retryable response codes and limits retries within the configured rolling window.
 
 See [configuration](configuration.md#retry-policy) for retry policy settings.
-

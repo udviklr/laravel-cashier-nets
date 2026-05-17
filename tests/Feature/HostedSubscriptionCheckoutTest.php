@@ -45,9 +45,11 @@ class HostedSubscriptionCheckoutTest extends TestCase
             ->intervalDays(30)
             ->description('Pro plan')
             ->reference('pro-plan')
+            ->myReference('INV-2026-000123')
             ->returnUrl('https://example.com/billing/return')
             ->cancelUrl('https://example.com/billing/cancel')
             ->termsUrl('https://example.com/terms')
+            ->merchantHandlesConsumerData()
             ->endDate(Carbon::parse('2027-01-01T00:00:00Z'))
             ->metadata(['plan' => 'pro'])
             ->checkout();
@@ -67,6 +69,7 @@ class HostedSubscriptionCheckoutTest extends TestCase
             'currency' => 'DKK',
             'interval_days' => 30,
         ]);
+        $this->assertSame('INV-2026-000123', $checkout->subscription()?->metadata['my_reference']);
 
         $recorded = Http::recorded();
         $this->assertCount(1, $recorded);
@@ -80,12 +83,14 @@ class HostedSubscriptionCheckoutTest extends TestCase
         $this->assertSame('https://example.com/billing/return', $payload['checkout']['returnUrl']);
         $this->assertSame('https://example.com/billing/cancel', $payload['checkout']['cancelUrl']);
         $this->assertSame('https://example.com/terms', $payload['checkout']['termsUrl']);
+        $this->assertTrue($payload['checkout']['merchantHandlesConsumerData']);
         $this->assertFalse($payload['checkout']['charge']);
         $this->assertSame(9900, $payload['order']['amount']);
         $this->assertSame('DKK', $payload['order']['currency']);
         $this->assertSame('pro-plan', $payload['order']['items'][0]['reference']);
         $this->assertSame(30, $payload['subscription']['interval']);
         $this->assertSame('2027-01-01T00:00:00+00:00', $payload['subscription']['endDate']);
+        $this->assertSame('INV-2026-000123', $payload['myReference']);
         $this->assertSame('https://example.com/nets/webhook', $payload['notifications']['webHooks'][0]['url']);
         $this->assertSame('webhook-secret', $payload['notifications']['webHooks'][0]['authorization']);
     }
@@ -105,6 +110,37 @@ class HostedSubscriptionCheckoutTest extends TestCase
             ->amount(5000)
             ->returnUrl('https://example.com/return')
             ->checkout();
+    }
+
+    public function test_subscription_checkout_rejects_too_long_my_reference_values(): void
+    {
+        $user = User::create([
+            'name' => 'Taylor Otwell',
+            'email' => 'taylor@example.com',
+            'password' => 'secret',
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The Nets myReference value may not be greater than 36 characters.');
+
+        $user->newNetsSubscription()
+            ->myReference(str_repeat('A', 37));
+    }
+
+    public function test_subscription_checkout_accepts_merchant_reference_alias(): void
+    {
+        $user = User::create([
+            'name' => 'Taylor Otwell',
+            'email' => 'taylor@example.com',
+            'password' => 'secret',
+        ]);
+
+        $builder = $user->newNetsSubscription()
+            ->merchantReference('INV-2026-000123');
+
+        $property = new \ReflectionProperty($builder, 'myReference');
+
+        $this->assertSame('INV-2026-000123', $property->getValue($builder));
     }
 
     public function test_subscription_checkout_can_request_an_initial_charge_and_end_date(): void

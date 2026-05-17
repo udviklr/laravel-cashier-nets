@@ -44,6 +44,9 @@ class SubscriptionChargeTest extends TestCase
             'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::response([
                 'paymentId' => 'pay_renewal_123',
                 'chargeId' => 'charge_123',
+                'invoice' => [
+                    'invoiceNumber' => 'NEXI-2026-000124',
+                ],
             ]),
         ]);
 
@@ -59,6 +62,7 @@ class SubscriptionChargeTest extends TestCase
         $transaction = $subscription->charge([
             'description' => 'Pro plan renewal',
             'reference' => 'pro-plan',
+            'my_reference' => 'INV-2026-000124',
             'idempotency_key' => 'idem_123',
         ]);
 
@@ -66,6 +70,8 @@ class SubscriptionChargeTest extends TestCase
         $this->assertSame('pay_renewal_123', $transaction->fresh()->nets_payment_id);
         $this->assertSame('charge_123', $transaction->fresh()->nets_charge_id);
         $this->assertSame('idem_123', $transaction->fresh()->idempotency_key);
+        $this->assertSame('INV-2026-000124', $transaction->fresh()->metadata['my_reference']);
+        $this->assertSame('NEXI-2026-000124', $transaction->fresh()->metadata['invoice_number']);
 
         Http::assertSent(function (Request $request): bool {
             $payload = json_decode($request->body(), true);
@@ -77,8 +83,11 @@ class SubscriptionChargeTest extends TestCase
                 && $payload['order']['currency'] === 'DKK'
                 && $payload['order']['items'][0]['name'] === 'Pro plan renewal'
                 && $payload['order']['items'][0]['reference'] === 'pro-plan'
+                && $payload['myReference'] === 'INV-2026-000124'
                 && $payload['notifications']['webHooks'][0]['url'] === 'https://example.com/nets/webhook';
         });
+
+        Http::assertSentCount(1);
     }
 
     public function test_a_failed_api_charge_marks_the_subscription_past_due(): void
@@ -116,6 +125,30 @@ class SubscriptionChargeTest extends TestCase
             'failure_code' => '402',
             'failure_message' => 'Charge was rejected.',
         ]);
+    }
+
+    public function test_a_subscription_charge_rejects_too_long_my_reference_values_before_sending_the_request(): void
+    {
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+        ]);
+
+        Http::fake();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('The Nets myReference value may not be greater than 36 characters.');
+
+        try {
+            $subscription->charge([
+                'my_reference' => str_repeat('A', 37),
+            ]);
+        } finally {
+            Http::assertNothingSent();
+        }
     }
 
     public function test_a_non_retryable_failure_code_blocks_manual_retry(): void

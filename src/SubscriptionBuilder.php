@@ -9,6 +9,8 @@ use InvalidArgumentException;
 
 class SubscriptionBuilder
 {
+    protected const MAX_MY_REFERENCE_LENGTH = 36;
+
     protected const HOSTED_CHECKOUT = 'HostedPaymentPage';
 
     protected const EMBEDDED_CHECKOUT = 'EmbeddedCheckout';
@@ -23,6 +25,8 @@ class SubscriptionBuilder
 
     protected string $reference = 'subscription';
 
+    protected ?string $myReference = null;
+
     protected ?string $returnUrl = null;
 
     protected ?string $cancelUrl = null;
@@ -30,6 +34,8 @@ class SubscriptionBuilder
     protected ?string $checkoutUrl = null;
 
     protected ?string $termsUrl = null;
+
+    protected ?bool $merchantHandlesConsumerData = null;
 
     protected ?CarbonInterface $endDate = null;
 
@@ -113,6 +119,30 @@ class SubscriptionBuilder
     }
 
     /**
+     * Set the merchant payment reference.
+     */
+    public function myReference(string $reference): self
+    {
+        $reference = trim($reference);
+
+        if (strlen($reference) > self::MAX_MY_REFERENCE_LENGTH) {
+            throw new InvalidArgumentException('The Nets myReference value may not be greater than 36 characters.');
+        }
+
+        $this->myReference = $reference;
+
+        return $this;
+    }
+
+    /**
+     * Set the merchant payment reference.
+     */
+    public function merchantReference(string $reference): self
+    {
+        return $this->myReference($reference);
+    }
+
+    /**
      * Set the return URL.
      */
     public function returnUrl(string $url): self
@@ -148,6 +178,16 @@ class SubscriptionBuilder
     public function termsUrl(string $url): self
     {
         $this->termsUrl = $url;
+
+        return $this;
+    }
+
+    /**
+     * Let the merchant handle consumer data outside Nets checkout.
+     */
+    public function merchantHandlesConsumerData(bool $enabled = true): self
+    {
+        $this->merchantHandlesConsumerData = $enabled;
 
         return $this;
     }
@@ -272,6 +312,10 @@ class SubscriptionBuilder
             $checkout['termsUrl'] = $this->termsUrl;
         }
 
+        if ($this->merchantHandlesConsumerData !== null) {
+            $checkout['merchantHandlesConsumerData'] = $this->merchantHandlesConsumerData;
+        }
+
         $payload = [
             'checkout' => $checkout,
             'order' => [
@@ -294,6 +338,10 @@ class SubscriptionBuilder
 
         if ($payload['notifications']['webHooks'] === []) {
             unset($payload['notifications']);
+        }
+
+        if ($this->myReference !== null) {
+            $payload['myReference'] = $this->myReference;
         }
 
         return $payload;
@@ -368,6 +416,14 @@ class SubscriptionBuilder
             'next_charge_at' => now()->addDays(max(1, $this->intervalDays)),
             'metadata' => $this->metadata,
         ]);
+
+        if ($this->myReference !== null) {
+            $subscription->forceFill([
+                'metadata' => array_merge($subscription->metadata ?? [], [
+                    'my_reference' => $this->myReference,
+                ]),
+            ])->save();
+        }
 
         return $subscription;
     }

@@ -12,4 +12,5 @@
 - Keep checkout-completed webhook subscriptions pending when Nets does not include a subscription ID.
 - Document lowercase hosted callback `paymentid` and local tunnel session/proxy requirements.
 - Add single subscription charging and due-subscription Artisan command.
+- Add Nets `myReference` support for subscription checkout and charge merchant references, including sandbox integration coverage.
 - Add PHPUnit and PHPStan verification.

@@ -171,6 +171,12 @@ class WebhookControllerTest extends TestCase
             'amount' => 9900,
             'currency' => 'DKK',
         ]);
+
+        $transaction = Transaction::query()->first();
+
+        $this->assertNotNull($transaction);
+        $this->assertSame('INV-2026-000124', $transaction->metadata['my_reference']);
+        $this->assertSame('NEXI-2026-000124', $transaction->metadata['invoice_number']);
     }
 
     public function test_it_handles_legacy_charge_created_webhooks(): void
@@ -391,6 +397,8 @@ class WebhookControllerTest extends TestCase
                 'chargeId' => 'charge_123',
                 'subscriptionId' => 'sub_123',
                 'reconciliationReference' => 'MRJhJvEDCx1y7uWlKfb6O3z78',
+                'myReference' => 'INV-2026-000124',
+                'invoiceNumber' => 'NEXI-2026-000124',
                 'amount' => [
                     'amount' => '9900',
                     'currency' => 'DKK',

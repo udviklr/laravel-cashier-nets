@@ -76,6 +76,8 @@ Route::get('/subscribe', function (Request $request) {
         ->currency('DKK')
         ->intervalDays(30)
         ->description('Pro plan')
+        ->reference('pro-plan')
+        ->myReference('INV-2026-000123')
         ->returnUrl(route('billing.return'))
         ->termsUrl(route('terms'))
         ->endDate(now()->addYear())
@@ -102,6 +104,7 @@ Route::get('/billing/checkout-session', function (Request $request) {
         ->currency('DKK')
         ->intervalDays(30)
         ->description('Pro plan')
+        ->merchantHandlesConsumerData()
         ->checkoutUrl(route('billing.checkout'))
         ->termsUrl(route('terms'))
         ->endDate(now()->addYear())
@@ -118,6 +121,10 @@ Route::get('/billing/checkout-session', function (Request $request) {
 Your application is responsible for rendering the embedded checkout page with Nexi's Checkout JS SDK. This keeps the package frontend-agnostic for Blade, Livewire, Inertia, Vue, React, or other stacks.
 
 Nets requires an `endDate` when creating a subscription. The package exposes this through `endDate()`, which accepts a `CarbonInterface`, `DateTimeInterface`, or date string.
+
+Nets subscriptions use day-based intervals. For example, `intervalDays(30)` is a 30-day billing interval, not a calendar month. If your application stores its own local billing or access period, calculate it from the same interval days value you pass to Cashier Nets so it stays aligned with `nets_subscriptions.next_charge_at`.
+
+Use `merchantHandlesConsumerData()` when your SaaS app collects billing identity itself, such as billing name, VAT, CVR, or invoice details. Nets may hide invoice or installment payment methods if full consumer data is not supplied to checkout.
 
 ## Subscription State
 
@@ -166,7 +173,9 @@ Hosted checkout return routes are application-owned. Nets may return the payment
 
 ## Renewals
 
-The package owns local renewal scheduling through `nets_subscriptions.next_charge_at`. Charge due subscriptions with:
+The package owns local renewal scheduling through `nets_subscriptions.next_charge_at`. Nets subscriptions use day-based intervals, so align any local billing or access period with the same interval days value you sent through `intervalDays()`.
+
+Charge due subscriptions with:
 
 ```shell
 php artisan cashier-nets:charge-due
@@ -183,7 +192,10 @@ Schedule::command('cashier-nets:charge-due')->everyTenMinutes();
 You may also charge a subscription manually:
 
 ```php
-$transaction = $user->netsSubscription('default')->charge();
+$transaction = $user->netsSubscription('default')->charge([
+    'reference' => 'pro-plan-renewal',
+    'my_reference' => 'INV-2026-000124',
+]);
 ```
 
 Failed charge attempts are stored in `nets_transactions`. Retry behavior follows Nets' published retry guidance through the `cashier-nets.retry_policy` config values.
@@ -241,6 +253,8 @@ NETS_CHECKOUT_KEY=your-sandbox-checkout-key \
 composer test:integration
 ```
 
+The default integration suite retrieves created payments from Nets and verifies that order references and `myReference` merchant references were persisted.
+
 Renewal charge coverage is available as an explicit opt-in because it creates real sandbox charge attempts against an existing active Nets subscription:
 
 ```shell
@@ -249,6 +263,8 @@ NETS_SECRET_KEY=your-sandbox-secret-key \
 NETS_TEST_SUBSCRIPTION_ID=active-sandbox-subscription-id \
 composer test:integration:charges
 ```
+
+The charge integration test verifies the renewal charge reference, `myReference`, and any returned `invoiceNumber` metadata.
 
 See [Testing](docs/testing.md) for fake helpers, webhook assertions, and integration test overrides.
 

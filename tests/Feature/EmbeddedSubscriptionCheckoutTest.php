@@ -46,6 +46,7 @@ class EmbeddedSubscriptionCheckoutTest extends TestCase
             ->reference('pro-plan')
             ->checkoutUrl('https://example.com/billing/checkout')
             ->termsUrl('https://example.com/terms')
+            ->merchantHandlesConsumerData()
             ->endDate(Carbon::parse('2027-01-01T00:00:00Z'))
             ->metadata(['plan' => 'pro'])
             ->embeddedCheckout();
@@ -79,6 +80,7 @@ class EmbeddedSubscriptionCheckoutTest extends TestCase
         $this->assertSame('EmbeddedCheckout', $payload['checkout']['integrationType']);
         $this->assertSame('https://example.com/billing/checkout', $payload['checkout']['url']);
         $this->assertSame('https://example.com/terms', $payload['checkout']['termsUrl']);
+        $this->assertTrue($payload['checkout']['merchantHandlesConsumerData']);
         $this->assertArrayNotHasKey('returnUrl', $payload['checkout']);
         $this->assertArrayNotHasKey('cancelUrl', $payload['checkout']);
         $this->assertSame(9900, $payload['order']['amount']);

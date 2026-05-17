@@ -29,6 +29,8 @@ use RuntimeException;
  */
 class Subscription extends Model
 {
+    protected const MAX_MY_REFERENCE_LENGTH = 36;
+
     public const DEFAULT_TYPE = 'default';
 
     public const STATUS_PENDING = 'pending';
@@ -197,7 +199,7 @@ class Subscription extends Model
     /**
      * Charge the subscription through Nets.
      *
-     * @param  array{amount?: int, currency?: string, description?: string, reference?: string, idempotency_key?: string, metadata?: array<string, mixed>}  $options
+     * @param  array{amount?: int, currency?: string, description?: string, reference?: string, my_reference?: string, merchant_reference?: string, idempotency_key?: string, metadata?: array<string, mixed>}  $options
      */
     public function charge(array $options = []): Transaction
     {
@@ -247,6 +249,7 @@ class Subscription extends Model
         $transaction->forceFill([
             'nets_payment_id' => is_scalar($response['paymentId'] ?? null) ? (string) $response['paymentId'] : $transaction->nets_payment_id,
             'nets_charge_id' => is_scalar($response['chargeId'] ?? null) ? (string) $response['chargeId'] : $transaction->nets_charge_id,
+            'metadata' => array_merge($transaction->metadata ?? [], $this->responseReferenceMetadata($response)),
         ])->save();
 
         return $transaction;
@@ -275,7 +278,7 @@ class Subscription extends Model
     /**
      * Build the Nets subscription charge payload.
      *
-     * @param  array{description?: string, reference?: string, metadata?: array<string, mixed>}  $options
+     * @param  array{description?: string, reference?: string, my_reference?: string, merchant_reference?: string, metadata?: array<string, mixed>}  $options
      * @return array<string, mixed>
      */
     public function chargePayload(int $amount, string $currency, array $options = []): array
@@ -309,6 +312,12 @@ class Subscription extends Model
             unset($payload['notifications']);
         }
 
+        $myReference = $this->myReferenceOption($options);
+
+        if ($myReference !== null) {
+            $payload['myReference'] = $myReference;
+        }
+
         return $payload;
     }
 
@@ -338,6 +347,15 @@ class Subscription extends Model
     protected function recordPendingCharge(int $amount, string $currency, string $idempotencyKey, array $options): Transaction
     {
         $transactionModel = CashierNets::$transactionModel;
+        $metadata = array_merge($options['metadata'] ?? [], [
+            'source' => 'subscription_charge',
+        ]);
+
+        $myReference = $this->myReferenceOption($options);
+
+        if ($myReference !== null) {
+            $metadata['my_reference'] = $myReference;
+        }
 
         return $transactionModel::query()->updateOrCreate([
             'idempotency_key' => $idempotencyKey,
@@ -349,10 +367,62 @@ class Subscription extends Model
             'status' => Transaction::STATUS_PENDING,
             'amount' => $amount,
             'currency' => $currency,
-            'metadata' => array_merge($options['metadata'] ?? [], [
-                'source' => 'subscription_charge',
-            ]),
+            'metadata' => $metadata,
         ]);
+    }
+
+    /**
+     * Get the merchant payment reference from charge options.
+     *
+     * @param  array<string, mixed>  $options
+     */
+    protected function myReferenceOption(array $options): ?string
+    {
+        $reference = $options['my_reference'] ?? $options['merchant_reference'] ?? null;
+
+        if (! is_scalar($reference)) {
+            return null;
+        }
+
+        $reference = trim((string) $reference);
+
+        if ($reference === '') {
+            return null;
+        }
+
+        if (strlen($reference) > self::MAX_MY_REFERENCE_LENGTH) {
+            throw new InvalidArgumentException('The Nets myReference value may not be greater than 36 characters.');
+        }
+
+        return $reference;
+    }
+
+    /**
+     * Extract reference metadata from a Nets charge response.
+     *
+     * @param  array<string, mixed>  $response
+     * @return array<string, string>
+     */
+    protected function responseReferenceMetadata(array $response): array
+    {
+        $metadata = [];
+
+        foreach ([
+            'invoice_number' => ['invoiceNumber', 'invoice.invoiceNumber', 'charge.invoiceNumber', 'payment.invoiceNumber'],
+            'my_reference' => ['myReference', 'charge.myReference', 'payment.myReference'],
+        ] as $key => $paths) {
+            foreach ($paths as $path) {
+                $value = Arr::get($response, $path);
+
+                if (is_scalar($value) && trim((string) $value) !== '') {
+                    $metadata[$key] = trim((string) $value);
+
+                    break;
+                }
+            }
+        }
+
+        return $metadata;
     }
 
     /**
