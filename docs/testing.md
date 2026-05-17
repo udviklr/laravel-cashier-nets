@@ -43,7 +43,7 @@ Calls to that endpoint will throw `Udviklr\CashierNets\Exceptions\NetsException`
 
 ## Webhook Event Assertions
 
-`CashierNets::fake()` fakes package webhook events:
+`CashierNets::fake()` fakes package webhook events, including the generic webhook events and the semantic checkout / charge events:
 
 ```php
 CashierNets::assertWebhookReceived();
@@ -116,4 +116,3 @@ NETS_SECRET_KEY=your-sandbox-secret-key \
 NETS_TEST_SUBSCRIPTION_ID=active-sandbox-subscription-id \
 composer test:integration:charges
 ```
-

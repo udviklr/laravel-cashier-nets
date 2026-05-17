@@ -15,28 +15,28 @@ class WebhookHandler
      *
      * @param  array<string, mixed>  $payload
      */
-    public function handle(array $payload): void
+    public function handle(array $payload): WebhookHandlingResult
     {
-        match ($this->eventName($payload)) {
+        $payload = WebhookPayload::from($payload);
+
+        return match ($payload->eventName()) {
             'payment.created' => $this->handlePaymentCreated($payload),
             'payment.checkout.completed' => $this->handleCheckoutCompleted($payload),
             'payment.charge.created', 'payment.charge.created.v2' => $this->handleChargeCreated($payload),
             'payment.charge.failed', 'payment.charge.failed.v2', 'payment.reservation.failed' => $this->handlePaymentFailed($payload),
-            default => null,
+            default => new WebhookHandlingResult($payload),
         };
     }
 
     /**
      * Handle a payment.created event.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function handlePaymentCreated(array $payload): void
+    protected function handlePaymentCreated(WebhookPayload $payload): WebhookHandlingResult
     {
         $subscription = $this->findSubscription($payload);
 
         if (! $subscription) {
-            return;
+            return new WebhookHandlingResult($payload);
         }
 
         $updates = $this->subscriptionIdentifierUpdates($payload);
@@ -44,27 +44,29 @@ class WebhookHandler
         if ($updates !== []) {
             $subscription->forceFill($updates)->save();
         }
+
+        return new WebhookHandlingResult($payload, $subscription->refresh());
     }
 
     /**
      * Handle a payment.checkout.completed event.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function handleCheckoutCompleted(array $payload): void
+    protected function handleCheckoutCompleted(WebhookPayload $payload): WebhookHandlingResult
     {
         $subscription = $this->findSubscription($payload);
 
         if (! $subscription) {
-            return;
+            return new WebhookHandlingResult($payload);
         }
 
-        $updates = array_merge($this->subscriptionIdentifierUpdates($payload), [
-            'status' => Subscription::STATUS_ACTIVE,
-        ]);
+        $updates = $this->subscriptionIdentifierUpdates($payload);
 
-        $amount = $this->amount($payload);
-        $currency = $this->currency($payload);
+        if ($payload->subscriptionId() !== null || $subscription->nets_subscription_id !== null) {
+            $updates['status'] = Subscription::STATUS_ACTIVE;
+        }
+
+        $amount = $payload->amount();
+        $currency = $payload->currency();
 
         if ($amount !== null) {
             $updates['amount'] = $amount;
@@ -75,24 +77,24 @@ class WebhookHandler
         }
 
         $subscription->forceFill($updates)->save();
+
+        return new WebhookHandlingResult($payload, $subscription->refresh());
     }
 
     /**
      * Handle a successful charge event.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function handleChargeCreated(array $payload): void
+    protected function handleChargeCreated(WebhookPayload $payload): WebhookHandlingResult
     {
         $subscription = $this->findSubscription($payload);
 
         if (! $subscription) {
-            return;
+            return new WebhookHandlingResult($payload);
         }
 
         $occurredAt = $this->occurredAt($payload);
 
-        $this->recordTransaction($subscription, $payload, Transaction::STATUS_SUCCEEDED, $occurredAt);
+        $transaction = $this->recordTransaction($subscription, $payload, Transaction::STATUS_SUCCEEDED, $occurredAt);
 
         $updates = array_merge($this->subscriptionIdentifierUpdates($payload), [
             'status' => Subscription::STATUS_ACTIVE,
@@ -105,44 +107,45 @@ class WebhookHandler
         }
 
         $subscription->forceFill($updates)->save();
+
+        return new WebhookHandlingResult($payload, $subscription->refresh(), $transaction);
     }
 
     /**
      * Handle a failed reservation or charge event.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function handlePaymentFailed(array $payload): void
+    protected function handlePaymentFailed(WebhookPayload $payload): WebhookHandlingResult
     {
         $subscription = $this->findSubscription($payload);
 
         if (! $subscription) {
-            return;
+            return new WebhookHandlingResult($payload);
         }
 
         $occurredAt = $this->occurredAt($payload);
 
-        $this->recordTransaction($subscription, $payload, Transaction::STATUS_FAILED, $occurredAt);
+        $transaction = $this->recordTransaction($subscription, $payload, Transaction::STATUS_FAILED, $occurredAt);
 
         $subscription->forceFill(array_merge($this->subscriptionIdentifierUpdates($payload), [
             'status' => Subscription::STATUS_PAST_DUE,
             'failed_at' => $occurredAt,
         ]))->save();
+
+        return new WebhookHandlingResult($payload, $subscription->refresh(), $transaction);
     }
 
     /**
      * Record or update a transaction for a webhook payload.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function recordTransaction(Subscription $subscription, array $payload, string $status, Carbon $occurredAt): void
+    protected function recordTransaction(Subscription $subscription, WebhookPayload $payload, string $status, Carbon $occurredAt): ?Transaction
     {
         $transactionModel = CashierNets::$transactionModel;
-        $chargeId = $this->stringValue(Arr::get($payload, 'data.chargeId'));
-        $paymentId = $this->paymentId($payload);
+        $rawPayload = $payload->raw();
+        $chargeId = $payload->chargeId();
+        $paymentId = $payload->paymentId();
 
         if ($chargeId === null && $paymentId === null) {
-            return;
+            return null;
         }
 
         $lookup = $chargeId !== null
@@ -156,33 +159,33 @@ class WebhookHandler
             'billable_id' => $subscription->billable_id,
             'nets_payment_id' => $paymentId,
             'nets_charge_id' => $chargeId,
-            'nets_subscription_id' => $this->subscriptionId($payload) ?? $subscription->nets_subscription_id,
+            'nets_subscription_id' => $payload->subscriptionId() ?? $subscription->nets_subscription_id,
             'nets_unscheduled_subscription_id' => $subscription->nets_unscheduled_subscription_id,
             'status' => $status,
-            'amount' => $this->amount($payload),
-            'currency' => $this->currency($payload),
-            'failure_code' => $status === Transaction::STATUS_FAILED ? $this->stringValue(Arr::get($payload, 'data.error.code')) : null,
-            'failure_message' => $status === Transaction::STATUS_FAILED ? $this->stringValue(Arr::get($payload, 'data.error.message')) : null,
+            'amount' => $payload->amount(),
+            'currency' => $payload->currency(),
+            'failure_code' => $status === Transaction::STATUS_FAILED ? $this->stringValue(Arr::get($rawPayload, 'data.error.code')) : null,
+            'failure_message' => $status === Transaction::STATUS_FAILED ? $this->stringValue(Arr::get($rawPayload, 'data.error.message')) : null,
             'billed_at' => $occurredAt,
             'metadata' => [
-                'webhook_event_id' => $this->eventId($payload),
-                'webhook_event_name' => $this->eventName($payload),
-                'reconciliation_reference' => $this->stringValue(Arr::get($payload, 'data.reconciliationReference')),
-                'my_reference' => $this->stringValue(Arr::get($payload, 'data.myReference')),
+                'webhook_event_id' => $payload->eventId(),
+                'webhook_event_name' => $payload->eventName(),
+                'reconciliation_reference' => $this->stringValue(Arr::get($rawPayload, 'data.reconciliationReference')),
+                'my_reference' => $this->stringValue(Arr::get($rawPayload, 'data.myReference')),
             ],
         ])->save();
+
+        return $transaction;
     }
 
     /**
      * Find the local subscription that belongs to the webhook payload.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function findSubscription(array $payload): ?Subscription
+    protected function findSubscription(WebhookPayload $payload): ?Subscription
     {
         $subscriptionModel = CashierNets::$subscriptionModel;
 
-        $subscriptionId = $this->subscriptionId($payload);
+        $subscriptionId = $payload->subscriptionId();
 
         if ($subscriptionId !== null) {
             $subscription = $subscriptionModel::query()
@@ -194,7 +197,7 @@ class WebhookHandler
             }
         }
 
-        $paymentId = $this->paymentId($payload);
+        $paymentId = $payload->paymentId();
 
         if ($paymentId !== null) {
             return $subscriptionModel::query()
@@ -208,12 +211,11 @@ class WebhookHandler
     /**
      * Extract subscription identifier updates from the payload.
      *
-     * @param  array<string, mixed>  $payload
      * @return array<string, string>
      */
-    protected function subscriptionIdentifierUpdates(array $payload): array
+    protected function subscriptionIdentifierUpdates(WebhookPayload $payload): array
     {
-        $subscriptionId = $this->subscriptionId($payload);
+        $subscriptionId = $payload->subscriptionId();
 
         return $subscriptionId === null ? [] : [
             'nets_subscription_id' => $subscriptionId,
@@ -227,7 +229,7 @@ class WebhookHandler
      */
     public function eventId(array $payload): ?string
     {
-        return $this->stringValue(Arr::get($payload, 'id'));
+        return WebhookPayload::from($payload)->eventId();
     }
 
     /**
@@ -237,63 +239,17 @@ class WebhookHandler
      */
     public function eventName(array $payload): string
     {
-        return $this->stringValue(Arr::get($payload, 'event') ?? Arr::get($payload, 'eventName')) ?? 'unknown';
-    }
-
-    /**
-     * Get the payment identifier from the payload.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    protected function paymentId(array $payload): ?string
-    {
-        return $this->stringValue(Arr::get($payload, 'data.paymentId'));
-    }
-
-    /**
-     * Get the subscription identifier from the payload.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    protected function subscriptionId(array $payload): ?string
-    {
-        return $this->stringValue(Arr::get($payload, 'data.subscriptionId'));
-    }
-
-    /**
-     * Get the event amount in minor units.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    protected function amount(array $payload): ?int
-    {
-        $amount = Arr::get($payload, 'data.amount.amount')
-            ?? Arr::get($payload, 'data.order.amount.amount');
-
-        return is_numeric($amount) ? (int) $amount : null;
-    }
-
-    /**
-     * Get the event currency.
-     *
-     * @param  array<string, mixed>  $payload
-     */
-    protected function currency(array $payload): ?string
-    {
-        return $this->stringValue(Arr::get($payload, 'data.amount.currency')
-            ?? Arr::get($payload, 'data.order.amount.currency'));
+        return WebhookPayload::from($payload)->eventName();
     }
 
     /**
      * Get the event occurrence time.
-     *
-     * @param  array<string, mixed>  $payload
      */
-    protected function occurredAt(array $payload): Carbon
+    protected function occurredAt(WebhookPayload $payload): Carbon
     {
-        $timestamp = $this->stringValue(Arr::get($payload, 'timestamp'));
+        $occurredAt = $payload->occurredAt();
 
-        return $timestamp === null ? Carbon::now() : Carbon::parse($timestamp);
+        return $occurredAt === null ? Carbon::now() : Carbon::instance($occurredAt);
     }
 
     /**

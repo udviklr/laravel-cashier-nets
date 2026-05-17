@@ -12,7 +12,7 @@ Add your Nets credentials and environment settings to `.env`:
 NETS_SECRET_KEY=your-secret-api-key
 NETS_CHECKOUT_KEY=your-checkout-key
 NETS_SANDBOX=true
-NETS_WEBHOOK_AUTHORIZATION=your-random-webhook-secret
+NETS_WEBHOOK_SECRET=your-random-webhook-secret
 ```
 
 ## Credentials
@@ -75,17 +75,19 @@ CashierNets::$registersRoutes = false;
 
 If you disable the default route, register your own route to `Udviklr\CashierNets\Http\Controllers\WebhookController`.
 
-## Webhook Authorization
+## Webhook Secret
 
-Set a shared authorization value:
+Set a shared webhook secret:
 
 ```ini
-NETS_WEBHOOK_AUTHORIZATION=your-random-webhook-secret
+NETS_WEBHOOK_SECRET=your-random-webhook-secret
 ```
 
-When the package creates Nets payments or subscription charges, it includes this value in each webhook notification. Nexi sends the same value as the incoming `Authorization` header, and the package compares it exactly.
+When the package creates Nets payments or subscription charges, it includes this value in each webhook notification as Nexi's `authorization` field. Nexi sends the same value as the incoming `Authorization` header, and the package compares it exactly.
 
-If `NETS_WEBHOOK_AUTHORIZATION` is empty, the package accepts incoming webhooks without this header. That can be useful in isolated tests, but production applications should set it.
+If `NETS_WEBHOOK_SECRET` is empty, the package accepts incoming webhooks without this header. That can be useful in isolated tests, but production applications should set it.
+
+`NETS_WEBHOOK_AUTHORIZATION` is still read as a fallback for older installs, but new applications should use `NETS_WEBHOOK_SECRET`.
 
 ## Webhook Events
 
@@ -145,4 +147,3 @@ public function boot(): void
 ```
 
 Custom models should extend the corresponding package models so relationships, casts, and helpers continue to work.
-

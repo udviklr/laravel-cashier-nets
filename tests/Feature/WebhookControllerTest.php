@@ -7,6 +7,9 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
 use Tests\TestCase;
+use Udviklr\CashierNets\Events\ChargeFailed;
+use Udviklr\CashierNets\Events\ChargeSucceeded;
+use Udviklr\CashierNets\Events\CheckoutCompleted;
 use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
 use Udviklr\CashierNets\Subscription;
@@ -32,6 +35,7 @@ class WebhookControllerTest extends TestCase
     public function test_it_records_and_processes_checkout_completed_webhooks(): void
     {
         Event::fake([
+            CheckoutCompleted::class,
             WebhookHandled::class,
             WebhookReceived::class,
         ]);
@@ -62,6 +66,46 @@ class WebhookControllerTest extends TestCase
 
         Event::assertDispatched(WebhookReceived::class);
         Event::assertDispatched(WebhookHandled::class);
+        Event::assertDispatched(CheckoutCompleted::class, function (CheckoutCompleted $event) use ($subscription): bool {
+            return $event->payload->paymentId() === 'pay_123'
+                && $event->webhookEvent->event_name === 'payment.checkout.completed'
+                && $event->subscription?->is($subscription);
+        });
+    }
+
+    public function test_checkout_completed_without_a_subscription_id_keeps_the_subscription_pending(): void
+    {
+        Event::fake([
+            CheckoutCompleted::class,
+        ]);
+
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'status' => Subscription::STATUS_PENDING,
+            'amount' => 5000,
+            'currency' => 'DKK',
+        ]);
+
+        $payload = $this->checkoutCompletedPayload();
+        unset($payload['data']['subscriptionId']);
+
+        $this->postJson('/nets/webhook', $payload)
+            ->assertOk()
+            ->assertJson(['received' => true]);
+
+        $subscription->refresh();
+
+        $this->assertSame(Subscription::STATUS_PENDING, $subscription->status);
+        $this->assertNull($subscription->nets_subscription_id);
+        $this->assertSame(9900, $subscription->amount);
+        $this->assertSame('DKK', $subscription->currency);
+
+        Event::assertDispatched(CheckoutCompleted::class, function (CheckoutCompleted $event) use ($subscription): bool {
+            return $event->payload->paymentId() === 'pay_123'
+                && $event->subscription?->is($subscription)
+                && $event->subscription?->status === Subscription::STATUS_PENDING;
+        });
     }
 
     public function test_it_records_subscription_identifiers_from_payment_created_webhooks(): void
@@ -131,6 +175,10 @@ class WebhookControllerTest extends TestCase
 
     public function test_it_handles_legacy_charge_created_webhooks(): void
     {
+        Event::fake([
+            ChargeSucceeded::class,
+        ]);
+
         $subscription = $this->createSubscription([
             'type' => 'main',
             'nets_payment_id' => 'pay_123',
@@ -161,10 +209,20 @@ class WebhookControllerTest extends TestCase
             'amount' => 9900,
             'currency' => 'DKK',
         ]);
+
+        Event::assertDispatched(ChargeSucceeded::class, function (ChargeSucceeded $event) use ($subscription): bool {
+            return $event->payload->eventName() === 'payment.charge.created'
+                && $event->subscription?->is($subscription)
+                && $event->transaction?->status === Transaction::STATUS_SUCCEEDED;
+        });
     }
 
     public function test_it_marks_the_subscription_past_due_when_payment_reservation_fails(): void
     {
+        Event::fake([
+            ChargeFailed::class,
+        ]);
+
         $subscription = $this->createSubscription([
             'type' => 'main',
             'nets_payment_id' => 'pay_123',
@@ -190,6 +248,12 @@ class WebhookControllerTest extends TestCase
             'failure_code' => 'DECLINED',
             'failure_message' => 'Card was declined.',
         ]);
+
+        Event::assertDispatched(ChargeFailed::class, function (ChargeFailed $event) use ($subscription): bool {
+            return $event->payload->eventName() === 'payment.reservation.failed'
+                && $event->subscription?->is($subscription)
+                && $event->transaction?->status === Transaction::STATUS_FAILED;
+        });
     }
 
     public function test_it_marks_the_subscription_past_due_when_charge_failed_v2_webhooks_are_received(): void

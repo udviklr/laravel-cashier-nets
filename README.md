@@ -43,7 +43,7 @@ Add your Nets credentials and environment settings to `.env`:
 NETS_SECRET_KEY=your-secret-api-key
 NETS_CHECKOUT_KEY=your-checkout-key
 NETS_SANDBOX=true
-NETS_WEBHOOK_AUTHORIZATION=your-random-webhook-secret
+NETS_WEBHOOK_SECRET=your-random-webhook-secret
 ```
 
 The secret key is used for server-to-server Payment API calls and must never be exposed to browsers. The checkout key is used by embedded checkout frontend code and may be exposed client-side.
@@ -147,7 +147,7 @@ By default, the package registers a webhook endpoint at:
 /nets/webhook
 ```
 
-When creating Nets payments and subscription charges, the package includes configured webhook notifications. Nexi sends the configured `NETS_WEBHOOK_AUTHORIZATION` value as the incoming `Authorization` header, and the package compares it exactly.
+When creating Nets payments and subscription charges, the package includes configured webhook notifications. Nexi sends the configured `NETS_WEBHOOK_SECRET` value as the incoming `Authorization` header, and the package compares it exactly.
 
 The v1 webhook handler processes:
 
@@ -161,6 +161,8 @@ For local development, expose your Laravel app with a secure HTTPS tunnel such a
 
 > [!IMPORTANT]
 > Exclude the webhook route from Laravel CSRF protection, for example `nets/*` when using the default route prefix. See [Webhooks](docs/webhooks.md) for production setup, package events, idempotency, and troubleshooting.
+
+Hosted checkout return routes are application-owned. Nets may return the payment identifier as lowercase `paymentid`, so accept both `paymentid` and `paymentId` before calling `syncNetsSubscriptionFromPayment()`. For session-authenticated callbacks from hosted checkout, prefer `SESSION_SAME_SITE=lax`.
 
 ## Renewals
 
@@ -214,7 +216,7 @@ Before enabling live billing:
 
 - Set live `NETS_SECRET_KEY` and `NETS_CHECKOUT_KEY`.
 - Set `NETS_SANDBOX=false`.
-- Set a high-entropy `NETS_WEBHOOK_AUTHORIZATION` value.
+- Set a high-entropy `NETS_WEBHOOK_SECRET` value.
 - Ensure your public `APP_URL` is HTTPS and resolves to the application.
 - Exclude the package webhook route from Laravel CSRF protection.
 - Confirm Nexi can reach `/nets/webhook`, or your configured webhook path.

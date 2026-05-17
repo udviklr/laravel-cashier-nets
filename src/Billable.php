@@ -4,6 +4,8 @@ namespace Udviklr\CashierNets;
 
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
+use InvalidArgumentException;
+use Udviklr\CashierNets\Exceptions\CheckoutFinalizationException;
 
 /**
  * @mixin \Illuminate\Database\Eloquent\Model
@@ -59,6 +61,46 @@ trait Billable
     {
         /** @var \Udviklr\CashierNets\Subscription|null $subscription */
         $subscription = $this->netsSubscriptions()->where('type', $type)->first();
+
+        return $subscription;
+    }
+
+    /**
+     * Find or create a billable-scoped subscription by payment ID and sync it from Nets.
+     *
+     * @param  array<string, mixed>  $defaults
+     */
+    public function syncNetsSubscriptionFromPayment(
+        string $paymentId,
+        array $defaults = [],
+        string $type = Subscription::DEFAULT_TYPE,
+    ): Subscription {
+        $paymentId = trim($paymentId);
+
+        if ($paymentId === '') {
+            throw new InvalidArgumentException('A Nets payment ID is required.');
+        }
+
+        /** @var \Udviklr\CashierNets\Subscription|null $subscription */
+        $subscription = $this->netsSubscriptions()
+            ->where('nets_payment_id', $paymentId)
+            ->first();
+
+        if (! $subscription) {
+            /** @var \Udviklr\CashierNets\Subscription $subscription */
+            $subscription = $this->netsSubscriptions()->create(array_merge([
+                'type' => $type,
+                'status' => Subscription::STATUS_PENDING,
+            ], $defaults, [
+                'nets_payment_id' => $paymentId,
+            ]));
+        }
+
+        $subscription->syncFromNets()->refresh();
+
+        if (! $subscription->nets_subscription_id) {
+            throw new CheckoutFinalizationException('The Nets payment did not return a subscription ID.');
+        }
 
         return $subscription;
     }

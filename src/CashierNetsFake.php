@@ -6,6 +6,9 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Udviklr\CashierNets\Events\ChargeFailed;
+use Udviklr\CashierNets\Events\ChargeSucceeded;
+use Udviklr\CashierNets\Events\CheckoutCompleted;
 use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
 
@@ -36,6 +39,9 @@ final class CashierNetsFake
         }
 
         Event::fake(array_merge([
+            ChargeFailed::class,
+            ChargeSucceeded::class,
+            CheckoutCompleted::class,
             WebhookHandled::class,
             WebhookReceived::class,
         ], Arr::wrap($events)));

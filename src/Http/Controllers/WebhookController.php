@@ -6,9 +6,15 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Symfony\Component\HttpFoundation\Response;
 use Udviklr\CashierNets\CashierNets;
+use Udviklr\CashierNets\Events\ChargeFailed;
+use Udviklr\CashierNets\Events\ChargeSucceeded;
+use Udviklr\CashierNets\Events\CheckoutCompleted;
 use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
+use Udviklr\CashierNets\WebhookEvent;
+use Udviklr\CashierNets\Webhooks\WebhookHandlingResult;
 use Udviklr\CashierNets\Webhooks\WebhookHandler;
+use Udviklr\CashierNets\Webhooks\WebhookPayload;
 
 class WebhookController extends Controller
 {
@@ -46,11 +52,13 @@ class WebhookController extends Controller
             'payload' => $payload,
         ])->save();
 
-        $handler->handle($payload);
+        $result = $handler->handle($payload);
 
         $event->forceFill([
             'processed_at' => now(),
         ])->save();
+
+        $this->dispatchTypedWebhookEvent($result, $event);
 
         event(new WebhookHandled($payload));
 
@@ -71,5 +79,34 @@ class WebhookController extends Controller
         $actual = (string) $request->header('Authorization', '');
 
         abort_unless(hash_equals($expected, $actual), Response::HTTP_UNAUTHORIZED);
+    }
+
+    /**
+     * Dispatch a semantic webhook event when the Nets event maps to one.
+     */
+    protected function dispatchTypedWebhookEvent(WebhookHandlingResult $result, WebhookEvent $webhookEvent): void
+    {
+        $class = $this->typedWebhookEventClass($result->payload);
+
+        if ($class === null) {
+            return;
+        }
+
+        event(new $class($result->payload, $webhookEvent, $result->subscription, $result->transaction));
+    }
+
+    /**
+     * Get the semantic event class for a parsed webhook payload.
+     *
+     * @return class-string|null
+     */
+    protected function typedWebhookEventClass(WebhookPayload $payload): ?string
+    {
+        return match ($payload->eventName()) {
+            'payment.checkout.completed' => CheckoutCompleted::class,
+            'payment.charge.created', 'payment.charge.created.v2' => ChargeSucceeded::class,
+            'payment.charge.failed', 'payment.charge.failed.v2', 'payment.reservation.failed' => ChargeFailed::class,
+            default => null,
+        };
     }
 }

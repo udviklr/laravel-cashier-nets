@@ -10,6 +10,7 @@ use Orchestra\Testbench\Concerns\WithLaravelMigrations;
 use Tests\TestCase;
 use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Checkout;
+use Udviklr\CashierNets\Exceptions\CheckoutFinalizationException;
 use Udviklr\CashierNets\Subscription;
 use Workbench\App\Models\User;
 
@@ -166,5 +167,65 @@ class HostedSubscriptionCheckoutTest extends TestCase
 
         $this->assertSame('sub_123', $subscription->fresh()->nets_subscription_id);
         $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->fresh()->status);
+    }
+
+    public function test_a_billable_model_can_finalize_a_checkout_subscription_from_a_payment_id(): void
+    {
+        CashierNets::fake([
+            'v1/payments/pay_123' => [
+                'payment' => [
+                    'paymentId' => 'pay_123',
+                    'subscription' => [
+                        'id' => 'sub_123',
+                    ],
+                ],
+            ],
+        ]);
+
+        $user = User::create([
+            'name' => 'Taylor Otwell',
+            'email' => 'taylor@example.com',
+            'password' => 'secret',
+        ]);
+
+        $subscription = $user->syncNetsSubscriptionFromPayment('pay_123', [
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+        ], 'main');
+
+        $this->assertSame('pay_123', $subscription->nets_payment_id);
+        $this->assertSame('sub_123', $subscription->nets_subscription_id);
+        $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->status);
+        $this->assertSame(9900, $subscription->amount);
+        $this->assertSame('DKK', $subscription->currency);
+        $this->assertSame(30, $subscription->interval_days);
+
+        $again = $user->syncNetsSubscriptionFromPayment('pay_123', type: 'main');
+
+        $this->assertTrue($subscription->is($again));
+        $this->assertDatabaseCount('nets_subscriptions', 1);
+    }
+
+    public function test_checkout_finalization_fails_when_nets_does_not_return_a_subscription_id(): void
+    {
+        CashierNets::fake([
+            'v1/payments/pay_123' => [
+                'payment' => [
+                    'paymentId' => 'pay_123',
+                ],
+            ],
+        ]);
+
+        $user = User::create([
+            'name' => 'Taylor Otwell',
+            'email' => 'taylor@example.com',
+            'password' => 'secret',
+        ]);
+
+        $this->expectException(CheckoutFinalizationException::class);
+        $this->expectExceptionMessage('The Nets payment did not return a subscription ID.');
+
+        $user->syncNetsSubscriptionFromPayment('pay_123');
     }
 }

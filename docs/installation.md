@@ -64,10 +64,9 @@ Before enabling live billing:
 
 - Set live `NETS_SECRET_KEY` and `NETS_CHECKOUT_KEY`.
 - Set `NETS_SANDBOX=false`.
-- Set a high-entropy `NETS_WEBHOOK_AUTHORIZATION` value.
+- Set a high-entropy `NETS_WEBHOOK_SECRET` value.
 - Ensure your public `APP_URL` is HTTPS and resolves to the application.
 - Exclude the package webhook route from Laravel CSRF protection.
 - Confirm Nexi can reach `/nets/webhook`, or your configured webhook path.
 - Schedule `cashier-nets:charge-due` if the app should charge renewals.
 - Run a sandbox checkout and webhook test before switching credentials.
-

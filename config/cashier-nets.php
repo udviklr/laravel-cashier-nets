@@ -45,7 +45,7 @@ return [
 
     'webhook_path' => 'webhook',
 
-    'webhook_authorization' => env('NETS_WEBHOOK_AUTHORIZATION'),
+    'webhook_authorization' => env('NETS_WEBHOOK_SECRET'),
 
     'webhook_events' => [
         'payment.created',

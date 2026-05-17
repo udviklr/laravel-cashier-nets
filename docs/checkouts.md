@@ -103,6 +103,28 @@ Nets requires an `endDate` when creating a subscription. The method accepts a `C
 
 After checkout is created, the package stores a pending local subscription in `nets_subscriptions`. Webhooks should move it to active and persist the Nets subscription identifier.
 
+Hosted checkout callbacks can also finalize the package subscription by payment ID:
+
+```php
+$paymentId = (string) ($request->query('paymentid') ?? $request->query('paymentId') ?? '');
+
+$subscription = $user->syncNetsSubscriptionFromPayment(
+    paymentId: $paymentId,
+    defaults: [
+        'amount' => 9900,
+        'currency' => 'DKK',
+        'interval_days' => 30,
+    ],
+    type: 'default',
+);
+```
+
+The lookup is scoped to the billable model and is idempotent for the same payment ID. The method returns the package `Subscription` after calling `syncFromNets()`, or throws `Udviklr\CashierNets\Exceptions\CheckoutFinalizationException` if Nets does not return a subscription ID.
+
+Nets hosted checkout may return the payment identifier as lowercase `paymentid` in the return URL query string. Accept both `paymentid` and `paymentId` in application-owned callback routes.
+
+The `payment.checkout.completed` webhook may arrive without a `subscriptionId`. In that case, the package leaves the local subscription pending until the callback finalizes it with `syncNetsSubscriptionFromPayment()` or the subscription ID is otherwise synced from Nets.
+
 You can also manually sync provider identifiers from the payment details endpoint:
 
 ```php
@@ -146,4 +168,3 @@ class EnsureUserIsSubscribed
     }
 }
 ```
-

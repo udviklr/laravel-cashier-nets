@@ -44,15 +44,15 @@ protected $except = [
 ];
 ```
 
-## Authorization Header
+## Webhook Secret
 
 Set a shared secret in `.env`:
 
 ```ini
-NETS_WEBHOOK_AUTHORIZATION=your-random-webhook-secret
+NETS_WEBHOOK_SECRET=your-random-webhook-secret
 ```
 
-The package sends this value to Nets in the webhook notification payload. Nexi sends it back as the incoming `Authorization` header. The webhook controller rejects requests when the configured value and incoming header do not match.
+The package sends this value to Nets in the webhook notification payload as Nexi's `authorization` field. Nexi sends it back as the incoming `Authorization` header. The webhook controller rejects requests when the configured value and incoming header do not match.
 
 ## Events
 
@@ -72,7 +72,7 @@ Received webhook payloads are stored in `nets_webhook_events`. When a payload in
 
 ## Package Events
 
-The webhook controller dispatches:
+The webhook controller always dispatches the generic diagnostic events:
 
 ```php
 Udviklr\CashierNets\Events\WebhookReceived
@@ -99,17 +99,71 @@ class NetsWebhookListener
 
 Use application listeners when you need to update app-specific records after a billing event.
 
+For application state sync, prefer the semantic events that are dispatched after the package has persisted the webhook event and synced package-owned models:
+
+```php
+Udviklr\CashierNets\Events\CheckoutCompleted
+Udviklr\CashierNets\Events\ChargeSucceeded
+Udviklr\CashierNets\Events\ChargeFailed
+```
+
+These events expose a parsed payload, the stored `WebhookEvent`, and any resolved package `Subscription` or `Transaction`:
+
+```php
+namespace App\Listeners;
+
+use Udviklr\CashierNets\Events\ChargeSucceeded;
+
+class SyncSuccessfulNetsCharge
+{
+    public function handle(ChargeSucceeded $event): void
+    {
+        $paymentId = $event->payload->paymentId();
+        $chargeId = $event->payload->chargeId();
+        $subscription = $event->subscription;
+        $transaction = $event->transaction;
+    }
+}
+```
+
+Duplicate webhook deliveries still dispatch `WebhookHandled`, but semantic events are only dispatched when the package processes the webhook.
+
+## Parsed Payloads
+
+Use `Udviklr\CashierNets\Webhooks\WebhookPayload` when your application needs to read Nets identifiers from a raw webhook payload:
+
+```php
+use Udviklr\CashierNets\Webhooks\WebhookPayload;
+
+$payload = WebhookPayload::from($rawPayload);
+
+$payload->eventName();
+$payload->paymentId();
+$payload->chargeId();
+$payload->subscriptionId();
+$payload->amount();
+$payload->currency();
+$payload->occurredAt();
+$payload->raw();
+```
+
+Missing identifiers and unparseable timestamps return `null`. Amounts are returned in Nets minor units. `paymentId()` accepts both `data.paymentId` and the defensive lowercase `data.paymentid` variant.
+
 ## Local Development
 
 Nexi requires HTTPS webhook endpoints. During local development, expose your app with a secure tunnel such as Ngrok, Expose, Laravel Herd share, or another HTTPS tunnel.
 
 Make sure `APP_URL` points to the public tunnel URL before creating the checkout. The package uses Laravel's route generation for webhook URLs.
 
+When using an HTTPS tunnel in front of a local HTTP server, configure Laravel to trust forwarded proxy headers so generated URLs and asset URLs stay HTTPS. In session-authenticated hosted checkout flows, use `SESSION_SAME_SITE=lax`; `strict` can prevent the Laravel session cookie from being sent on the browser return from Nets.
+
+For local hosted checkout testing, build frontend assets normally instead of relying on Vite HMR through the payment-provider redirect unless your tunnel setup explicitly supports it.
+
 ## Troubleshooting
 
 Common webhook issues:
 
 - `419` responses usually mean the webhook route is still protected by CSRF middleware.
-- `401` responses mean the incoming `Authorization` header does not match `NETS_WEBHOOK_AUTHORIZATION`.
+- `401` responses mean the incoming `Authorization` header does not match `NETS_WEBHOOK_SECRET`.
 - Missing webhook calls often mean `APP_URL` was not public HTTPS when the checkout or charge was created.
-- Subscriptions stuck in `pending` usually mean `payment.checkout.completed` has not been received or matched to the local payment ID.
+- Subscriptions stuck in `pending` usually mean `payment.checkout.completed` has not been received or matched to the local payment ID, or the checkout-completed webhook did not include a Nets subscription ID and the hosted callback has not finalized the subscription yet.
