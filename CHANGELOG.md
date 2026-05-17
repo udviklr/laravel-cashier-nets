@@ -1,6 +1,6 @@
 # Release Notes
 
-## [Unreleased]
+## [1.0.0] - 2026-05-17
 
 - Initial package scaffold.
 - Add Nets API client, configuration, and test fakes.

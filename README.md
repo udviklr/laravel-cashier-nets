@@ -4,8 +4,8 @@ Laravel Cashier Nets provides a Cashier-inspired interface for Nets Easy / Nexi 
 
 The package focuses on reusable subscription plumbing: creating hosted or embedded checkout sessions, storing local subscription state, processing payment webhooks, charging due subscriptions, and faking provider calls in tests.
 
-> [!WARNING]
-> This package is under active development and targets a first v1 surface. It currently supports normal Nets subscriptions. Unscheduled subscriptions, one-time checkout helpers, and bulk subscription charges are deferred.
+> [!NOTE]
+> The `1.x` release line supports normal Nets subscriptions. Unscheduled subscriptions, one-time checkout helpers, and bulk subscription charges are not part of the `1.x` API surface.
 
 ## Documentation
 

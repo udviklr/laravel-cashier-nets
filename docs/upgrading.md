@@ -1,6 +1,6 @@
 # Upgrading
 
-Laravel Cashier Nets is under active development and targets a first v1 surface.
+Laravel Cashier Nets follows semantic versioning. The `1.x` release line supports normal Nets subscriptions and keeps the documented API surface stable within that major version.
 
 Before upgrading to a new release:
 
@@ -11,7 +11,7 @@ Before upgrading to a new release:
 - Run your billing feature tests with `CashierNets::fake()`.
 - Run a sandbox checkout before deploying a billing upgrade to production.
 
-## Current V1 Scope
+## Current 1.x Scope
 
 Currently supported:
 
@@ -33,4 +33,3 @@ Deferred:
 - Refunds, credits, and invoice rendering.
 
 Do not assume full Laravel Cashier Stripe or Cashier Paddle API parity. This package is Cashier-inspired but Nets-native.
-

@@ -8,7 +8,7 @@ use Udviklr\CashierNets\Client\NetsClient;
 
 class CashierNets
 {
-    public const VERSION = '0.1.0';
+    public const VERSION = '1.0.0';
 
     /**
      * Indicates if Cashier Nets routes will be registered.
