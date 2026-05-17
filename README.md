@@ -216,6 +216,17 @@ composer test
 composer analyse
 ```
 
+Sandbox integration tests are available when you want to exercise the package against Nets directly. They are not part of the default test suite and require real Nets sandbox credentials:
+
+```shell
+NETS_INTEGRATION=true \
+NETS_SECRET_KEY=your-sandbox-secret-key \
+NETS_CHECKOUT_KEY=your-sandbox-checkout-key \
+composer test:integration
+```
+
+Optional overrides are available for `NETS_TEST_AMOUNT`, `NETS_TEST_CURRENCY`, `NETS_TEST_RETURN_URL`, `NETS_TEST_CANCEL_URL`, `NETS_TEST_CHECKOUT_URL`, and `NETS_TEST_TERMS_URL`.
+
 ## License
 
 Laravel Cashier Nets is open-sourced software licensed under the [MIT license](LICENSE.md).

@@ -52,24 +52,21 @@ class Subscription extends Model
     protected $guarded = [];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'amount' => 'integer',
-            'interval_days' => 'integer',
-            'metadata' => 'array',
-            'next_charge_at' => 'datetime',
-            'trial_ends_at' => 'datetime',
-            'ends_at' => 'datetime',
-            'paused_at' => 'datetime',
-            'last_charged_at' => 'datetime',
-            'failed_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'amount' => 'integer',
+        'interval_days' => 'integer',
+        'metadata' => 'array',
+        'next_charge_at' => 'datetime',
+        'trial_ends_at' => 'datetime',
+        'ends_at' => 'datetime',
+        'paused_at' => 'datetime',
+        'last_charged_at' => 'datetime',
+        'failed_at' => 'datetime',
+    ];
 
     /**
      * Get the billable model related to the subscription.

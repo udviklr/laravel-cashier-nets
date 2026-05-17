@@ -23,16 +23,13 @@ class Customer extends Model
     protected $guarded = [];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'trial_ends_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'trial_ends_at' => 'datetime',
+    ];
 
     /**
      * Get the billable model related to the customer.

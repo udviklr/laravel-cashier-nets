@@ -1,7 +1,12 @@
 _private/
 /vendor/
 /.phpunit.cache/
+/phpunit.xml
 /composer.phar
+/composer.lock
+.env
+.env.*
+!.env.example
 .codex/
 .mcp.json
 AGENTS.md
@@ -9,4 +14,3 @@ CLAUDE.md
 .ai/
 .agents/
 .idea/
-composer.lock

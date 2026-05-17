@@ -35,18 +35,15 @@ class Transaction extends Model
     protected $guarded = [];
 
     /**
-     * Get the attributes that should be cast.
+     * The attributes that should be cast.
      *
-     * @return array<string, string>
+     * @var array<string, string>
      */
-    protected function casts(): array
-    {
-        return [
-            'amount' => 'integer',
-            'metadata' => 'array',
-            'billed_at' => 'datetime',
-        ];
-    }
+    protected $casts = [
+        'amount' => 'integer',
+        'metadata' => 'array',
+        'billed_at' => 'datetime',
+    ];
 
     /**
      * Get the billable model related to the transaction.
