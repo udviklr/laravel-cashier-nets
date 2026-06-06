@@ -9,7 +9,7 @@ class CashierNetsTest extends TestCase
 {
     public function test_it_exposes_the_package_version(): void
     {
-        $this->assertSame('1.0.0', CashierNets::VERSION);
+        $this->assertSame('1.1.1', CashierNets::VERSION);
     }
 
     public function test_it_exposes_the_configured_checkout_key(): void
