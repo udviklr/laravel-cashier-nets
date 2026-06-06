@@ -133,6 +133,64 @@ Nets subscriptions use day-based intervals. For example, `intervalDays(30)` is a
 
 Use `merchantHandlesConsumerData()` when your SaaS app collects billing identity itself, such as billing name, VAT, CVR, or invoice details. Nets may hide invoice or installment payment methods if full consumer data is not supplied to checkout.
 
+## Custom Order Items (VAT)
+
+By default, each subscription sends Nets a single order item with no tax split: `taxRate` and `taxAmount` are `0`, and the net and gross totals both equal the subscription amount. That is fine when prices are tax-exclusive or VAT is handled elsewhere.
+
+When the Nets order needs a real VAT breakdown — for example Danish `moms` on a gross-inclusive price — pass explicit order items with `orderItems()`. This works for both hosted and embedded checkout:
+
+```php
+// 5,000.00 DKK gross at 25% VAT = 4,000.00 net + 1,000.00 VAT.
+$checkout = $request->user()->newNetsSubscription('default')
+    ->amount(500000)
+    ->currency('DKK')
+    ->intervalDays(365)
+    ->description('Business - Yearly')
+    ->reference('business-yearly')
+    ->returnUrl(route('billing.return'))
+    ->endDate(now()->addYear())
+    ->orderItems([[
+        'reference' => 'business-yearly',
+        'name' => 'Business - Yearly',
+        'quantity' => 1,
+        'unit' => 'pcs',
+        'unitPrice' => 400000,
+        'taxRate' => 2500,
+        'taxAmount' => 100000,
+        'grossTotalAmount' => 500000,
+        'netTotalAmount' => 400000,
+    ]])
+    ->hostedCheckout();
+```
+
+`unitPrice` is the **net** (VAT-exclusive) price per unit, and `taxRate` is a percentage times 100, so `2500` means 25%. The package validates each item against the exact relationships Nets enforces, throwing an `InvalidArgumentException` before any API call if they do not match:
+
+```text
+netTotalAmount   = unitPrice * quantity
+grossTotalAmount = netTotalAmount + taxAmount
+order amount     = sum of every item grossTotalAmount
+```
+
+Custom items are snapshotted into the local subscription metadata (`metadata.order_items`) and reused automatically when the subscription is charged again by `cashier-nets:charge-due`, so recurring charges keep the same VAT breakdown. Override the items for a single charge by passing `order_items` to `charge()`:
+
+```php
+$user->netsSubscription('default')->charge([
+    'order_items' => [[
+        'reference' => 'business-yearly',
+        'name' => 'Business - Yearly',
+        'quantity' => 1,
+        'unit' => 'pcs',
+        'unitPrice' => 400000,
+        'taxRate' => 2500,
+        'taxAmount' => 100000,
+        'grossTotalAmount' => 500000,
+        'netTotalAmount' => 400000,
+    ]],
+]);
+```
+
+The package does not calculate VAT itself; pass items you have already calculated and snapshotted for invoicing.
+
 ## Subscription State
 
 After checkout is created, a pending local subscription is stored. Webhooks should move it to active and persist provider identifiers.

@@ -1,5 +1,10 @@
 # Release Notes
 
+## [1.1.1] - 2026-06-06
+
+- Fix the package version reported in the Nets API `User-Agent` header, which still read `1.0.0` after the 1.1.0 release.
+- Document VAT-aware custom order items in the README.
+
 ## [1.1.0] - 2026-06-06
 
 - Add `SubscriptionBuilder::orderItems()` to set explicit, VAT-aware Nets order items for subscription checkouts.
