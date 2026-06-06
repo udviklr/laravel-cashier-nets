@@ -44,6 +44,11 @@ class SubscriptionBuilder
     protected string $integrationType = self::HOSTED_CHECKOUT;
 
     /**
+     * @var array<int, array<string, mixed>>
+     */
+    protected array $orderItems = [];
+
+    /**
      * Additional metadata to store locally.
      *
      * @var array<string, mixed>
@@ -227,6 +232,22 @@ class SubscriptionBuilder
     }
 
     /**
+     * Set explicit Nets order items.
+     *
+     * @param  array<int, array<string, mixed>>  $items
+     */
+    public function orderItems(array $items): self
+    {
+        if ($items === []) {
+            throw new InvalidArgumentException('At least one order item is required.');
+        }
+
+        $this->orderItems = array_values($items);
+
+        return $this;
+    }
+
+    /**
      * Create a hosted Nets subscription checkout.
      */
     public function checkout(array $options = []): Checkout
@@ -319,7 +340,7 @@ class SubscriptionBuilder
         $payload = [
             'checkout' => $checkout,
             'order' => [
-                'items' => [$this->orderItem()],
+                'items' => $this->orderItems !== [] ? $this->orderItems : [$this->orderItem()],
                 'amount' => $this->amount,
                 'currency' => $this->currency,
                 'reference' => $this->reference,
@@ -354,6 +375,10 @@ class SubscriptionBuilder
     {
         if (! isset($this->amount)) {
             throw new InvalidArgumentException('A subscription amount is required.');
+        }
+
+        if ($this->orderItems !== []) {
+            CashierNets::assertOrderItemsConsistent($this->orderItems, $this->amount);
         }
 
         if ($this->integrationType === self::HOSTED_CHECKOUT && $this->returnUrl === null) {
@@ -404,6 +429,12 @@ class SubscriptionBuilder
      */
     protected function storePendingSubscription(string $paymentId): Subscription
     {
+        $metadata = $this->metadata;
+
+        if ($this->orderItems !== []) {
+            $metadata['order_items'] = $this->orderItems;
+        }
+
         /** @var \Udviklr\CashierNets\Subscription $subscription */
         $subscription = $this->billable->morphMany(CashierNets::$subscriptionModel, 'billable')->updateOrCreate([
             'type' => $this->type,
@@ -414,7 +445,7 @@ class SubscriptionBuilder
             'currency' => $this->currency,
             'interval_days' => $this->intervalDays,
             'next_charge_at' => now()->addDays(max(1, $this->intervalDays)),
-            'metadata' => $this->metadata,
+            'metadata' => $metadata,
         ]);
 
         if ($this->myReference !== null) {

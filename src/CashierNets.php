@@ -4,6 +4,7 @@ namespace Udviklr\CashierNets;
 
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Arr;
+use InvalidArgumentException;
 use Udviklr\CashierNets\Client\NetsClient;
 
 class CashierNets
@@ -190,5 +191,63 @@ class CashierNets
         }
 
         return $currency.' '.number_format($amount / 100, 2);
+    }
+
+    /**
+     * Assert that custom Nets order items are internally consistent and total the order amount.
+     *
+     * Enforces the exact integer invariants Nets applies to order.items, so a malformed item
+     * fails locally instead of being rejected by Nets at checkout or, worse, on a later
+     * recurring charge (which would otherwise flip the subscription to past due):
+     *
+     *   - netTotalAmount   = unitPrice * quantity   (unitPrice excludes VAT)
+     *   - grossTotalAmount = netTotalAmount + taxAmount
+     *   - order amount     = sum of every item grossTotalAmount
+     *
+     * The taxAmount = netTotalAmount * taxRate / 10000 relationship is intentionally NOT
+     * enforced: that division may round per unit, so the caller owns the rounded value.
+     * For the same reason netTotalAmount is only checked against unitPrice * quantity when
+     * the quantity is a whole number; fractional units (e.g. weight) are left to Nets.
+     *
+     * @param  array<int, array<string, mixed>>  $items
+     */
+    public static function assertOrderItemsConsistent(array $items, int $amount): void
+    {
+        $grossTotal = 0;
+
+        foreach ($items as $item) {
+            $tax = $item['taxAmount'] ?? 0;
+            $net = $item['netTotalAmount'] ?? null;
+            $gross = $item['grossTotalAmount'] ?? null;
+
+            if (! is_int($tax) || ! is_int($net) || ! is_int($gross)) {
+                throw new InvalidArgumentException(
+                    'Each Nets order item must define integer netTotalAmount, taxAmount and grossTotalAmount values in minor units.'
+                );
+            }
+
+            $quantity = $item['quantity'] ?? null;
+            $unitPrice = $item['unitPrice'] ?? null;
+
+            if (is_int($quantity) && is_int($unitPrice) && $net !== $unitPrice * $quantity) {
+                throw new InvalidArgumentException(
+                    'Nets order item netTotalAmount must equal unitPrice times quantity (unitPrice excludes VAT).'
+                );
+            }
+
+            if ($gross !== $net + $tax) {
+                throw new InvalidArgumentException(
+                    'Nets order item grossTotalAmount must equal netTotalAmount plus taxAmount.'
+                );
+            }
+
+            $grossTotal += $gross;
+        }
+
+        if ($grossTotal !== $amount) {
+            throw new InvalidArgumentException(
+                'The Nets order item gross totals ('.$grossTotal.') must equal the order amount ('.$amount.').'
+            );
+        }
     }
 }
