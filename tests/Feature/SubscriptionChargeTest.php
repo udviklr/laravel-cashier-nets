@@ -90,6 +90,103 @@ class SubscriptionChargeTest extends TestCase
         Http::assertSentCount(1);
     }
 
+    public function test_a_subscription_charge_can_use_custom_order_items(): void
+    {
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::response([
+                'paymentId' => 'pay_taxed',
+                'chargeId' => 'charge_taxed',
+            ]),
+        ]);
+
+        // unitPrice excludes VAT, so the persisted snapshot stores the net unit price (4000).
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 5000,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+            'metadata' => [
+                'order_items' => [[
+                    'reference' => 'business-yearly',
+                    'name' => 'Business - Yearly',
+                    'quantity' => 1,
+                    'unit' => 'pcs',
+                    'unitPrice' => 4000,
+                    'taxRate' => 2500,
+                    'taxAmount' => 1000,
+                    'grossTotalAmount' => 5000,
+                    'netTotalAmount' => 4000,
+                ]],
+            ],
+        ]);
+
+        $subscription->charge(['idempotency_key' => 'idem_taxed']);
+
+        Http::assertSent(function (Request $request): bool {
+            $payload = json_decode($request->body(), true);
+            $item = $payload['order']['items'][0];
+
+            return $request->url() === 'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges'
+                && $item['unitPrice'] === 4000
+                && $item['taxRate'] === 2500
+                && $item['taxAmount'] === 1000
+                && $item['netTotalAmount'] === 4000
+                && $item['grossTotalAmount'] === 5000
+                && $item['netTotalAmount'] === $item['unitPrice'] * $item['quantity']
+                && $item['grossTotalAmount'] === $item['netTotalAmount'] + $item['taxAmount']
+                && $payload['order']['amount'] === $item['grossTotalAmount'];
+        });
+    }
+
+    public function test_a_subscription_charge_rejects_inconsistent_order_items(): void
+    {
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::response([
+                'paymentId' => 'pay_taxed',
+                'chargeId' => 'charge_taxed',
+            ]),
+        ]);
+
+        // A poisoned snapshot: unitPrice is the gross amount, so netTotalAmount (4000) !=
+        // unitPrice * quantity (5000). Without local validation this would only surface as a
+        // failed Nets renewal that silently flips the subscription to past due.
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 5000,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+            'metadata' => [
+                'order_items' => [[
+                    'reference' => 'business-yearly',
+                    'name' => 'Business - Yearly',
+                    'quantity' => 1,
+                    'unit' => 'pcs',
+                    'unitPrice' => 5000,
+                    'taxRate' => 2500,
+                    'taxAmount' => 1000,
+                    'grossTotalAmount' => 5000,
+                    'netTotalAmount' => 4000,
+                ]],
+            ],
+        ]);
+
+        try {
+            $subscription->charge(['idempotency_key' => 'idem_taxed']);
+            $this->fail('Expected an InvalidArgumentException for inconsistent order items.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('unitPrice', $e->getMessage());
+        }
+
+        // The charge fails before any API call, pending transaction, or past-due transition.
+        Http::assertNothingSent();
+        $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->fresh()->status);
+        $this->assertSame(0, $subscription->transactions()->count());
+    }
+
     public function test_a_failed_api_charge_marks_the_subscription_past_due(): void
     {
         Http::fake([

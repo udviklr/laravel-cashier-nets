@@ -199,7 +199,7 @@ class Subscription extends Model
     /**
      * Charge the subscription through Nets.
      *
-     * @param  array{amount?: int, currency?: string, description?: string, reference?: string, my_reference?: string, merchant_reference?: string, idempotency_key?: string, metadata?: array<string, mixed>}  $options
+     * @param  array{amount?: int, currency?: string, description?: string, reference?: string, my_reference?: string, merchant_reference?: string, idempotency_key?: string, metadata?: array<string, mixed>, order_items?: array<int, array<string, mixed>>}  $options
      */
     public function charge(array $options = []): Transaction
     {
@@ -217,13 +217,18 @@ class Subscription extends Model
         }
 
         $idempotencyKey = $options['idempotency_key'] ?? $this->chargeIdempotencyKey();
+
+        // Build (and validate) the payload before recording a pending charge, so a malformed
+        // order item fails fast without marking the subscription past due.
+        $payload = $this->chargePayload($amount, strtoupper($currency), $options);
+
         $transaction = $this->recordPendingCharge($amount, strtoupper($currency), $idempotencyKey, $options);
 
         try {
             $response = CashierNets::api(
                 'POST',
                 'v1/subscriptions/'.$this->nets_subscription_id.'/charges',
-                $this->chargePayload($amount, strtoupper($currency), $options),
+                $payload,
                 ['idempotency_key' => $idempotencyKey],
             )->json();
         } catch (\Throwable $throwable) {
@@ -278,7 +283,7 @@ class Subscription extends Model
     /**
      * Build the Nets subscription charge payload.
      *
-     * @param  array{description?: string, reference?: string, my_reference?: string, merchant_reference?: string, metadata?: array<string, mixed>}  $options
+     * @param  array{description?: string, reference?: string, my_reference?: string, merchant_reference?: string, metadata?: array<string, mixed>, order_items?: array<int, array<string, mixed>>}  $options
      * @return array<string, mixed>
      */
     public function chargePayload(int $amount, string $currency, array $options = []): array
@@ -286,19 +291,13 @@ class Subscription extends Model
         $description = $options['description'] ?? ($this->metadata['description'] ?? 'Subscription renewal');
         $reference = $options['reference'] ?? ($this->metadata['reference'] ?? 'subscription-renewal');
 
+        $items = $this->chargeOrderItems($amount, $description, $reference, $options);
+
+        CashierNets::assertOrderItemsConsistent($items, $amount);
+
         $payload = [
             'order' => [
-                'items' => [[
-                    'reference' => $reference,
-                    'name' => $description,
-                    'quantity' => 1,
-                    'unit' => 'pcs',
-                    'unitPrice' => $amount,
-                    'taxRate' => 0,
-                    'taxAmount' => 0,
-                    'grossTotalAmount' => $amount,
-                    'netTotalAmount' => $amount,
-                ]],
+                'items' => $items,
                 'amount' => $amount,
                 'currency' => strtoupper($currency),
                 'reference' => $reference,
@@ -319,6 +318,31 @@ class Subscription extends Model
         }
 
         return $payload;
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     * @return array<int, array<string, mixed>>
+     */
+    protected function chargeOrderItems(int $amount, string $description, string $reference, array $options): array
+    {
+        $items = $options['order_items'] ?? $this->metadata['order_items'] ?? null;
+
+        if (is_array($items) && $items !== []) {
+            return array_values($items);
+        }
+
+        return [[
+            'reference' => $reference,
+            'name' => $description,
+            'quantity' => 1,
+            'unit' => 'pcs',
+            'unitPrice' => $amount,
+            'taxRate' => 0,
+            'taxAmount' => 0,
+            'grossTotalAmount' => $amount,
+            'netTotalAmount' => $amount,
+        ]];
     }
 
     /**
