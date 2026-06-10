@@ -6,6 +6,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
+use Udviklr\CashierNets\Events\ChargeAttemptFailed;
 use Udviklr\CashierNets\Events\ChargeFailed;
 use Udviklr\CashierNets\Events\ChargeSucceeded;
 use Udviklr\CashierNets\Events\CheckoutCompleted;
@@ -39,6 +40,7 @@ final class CashierNetsFake
         }
 
         Event::fake(array_merge([
+            ChargeAttemptFailed::class,
             ChargeFailed::class,
             ChargeSucceeded::class,
             CheckoutCompleted::class,

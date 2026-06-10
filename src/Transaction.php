@@ -13,6 +13,9 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * @property string|null $currency
  * @property string $status
  * @property string|null $failure_code
+ * @property \Illuminate\Support\Carbon|null $billed_at
+ * @property \Illuminate\Support\Carbon|null $created_at
+ * @property \Illuminate\Support\Carbon|null $updated_at
  */
 class Transaction extends Model
 {

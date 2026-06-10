@@ -4,6 +4,8 @@ namespace Udviklr\CashierNets\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Events\ChargeFailed;
@@ -32,33 +34,61 @@ class WebhookController extends Controller
 
         event(new WebhookReceived($payload));
 
-        if ($eventId !== null) {
-            $event = $eventModel::query()
-                ->where('nets_event_id', $eventId)
-                ->first();
+        if ($eventId === null) {
+            $event = new $eventModel;
 
-            if ($event && $event->processed()) {
+            $event->forceFill([
+                'nets_event_id' => null,
+                'event_name' => $eventName,
+                'payload' => $payload,
+            ])->save();
+
+            return DB::transaction(fn () => $this->process($event, $handler, $payload));
+        }
+
+        // Claim the event row before the processing transaction so a failed
+        // delivery leaves an unprocessed row behind for Nets redelivery.
+        $event = $eventModel::query()->createOrFirst([
+            'nets_event_id' => $eventId,
+        ], [
+            'event_name' => $eventName,
+            'payload' => $payload,
+        ]);
+
+        return DB::transaction(function () use ($event, $handler, $payload) {
+            $query = $event->newQuery();
+            $query->lockForUpdate();
+
+            $event = $query->findOrFail($event->getKey());
+
+            if ($event->processed()) {
                 event(new WebhookHandled($payload));
 
                 return response()->json(['received' => true, 'duplicate' => true]);
             }
-        }
 
-        $event ??= new $eventModel;
+            return $this->process($event, $handler, $payload);
+        });
+    }
 
-        $event->forceFill([
-            'nets_event_id' => $eventId,
-            'event_name' => $eventName,
-            'payload' => $payload,
-        ])->save();
-
+    /**
+     * Process a claimed webhook event.
+     *
+     * The typed event is dispatched before the row is marked processed, so a
+     * consumer listener exception leaves the event unprocessed and the next
+     * Nets redelivery re-runs the handler and listeners.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function process(WebhookEvent $event, WebhookHandler $handler, array $payload)
+    {
         $result = $handler->handle($payload);
+
+        $this->dispatchTypedWebhookEvent($result, $event);
 
         $event->forceFill([
             'processed_at' => now(),
         ])->save();
-
-        $this->dispatchTypedWebhookEvent($result, $event);
 
         event(new WebhookHandled($payload));
 
@@ -73,12 +103,32 @@ class WebhookController extends Controller
         $expected = (string) config('cashier-nets.webhook_authorization', '');
 
         if ($expected === '') {
+            if ($this->webhookAuthorizationRequired()) {
+                Log::critical('Cashier Nets rejected a webhook because no webhook authorization secret is configured. Set NETS_WEBHOOK_SECRET to restore webhook processing.');
+
+                abort(Response::HTTP_SERVICE_UNAVAILABLE, 'Webhook authorization is not configured.');
+            }
+
             return;
         }
 
         $actual = (string) $request->header('Authorization', '');
 
         abort_unless(hash_equals($expected, $actual), Response::HTTP_UNAUTHORIZED);
+    }
+
+    /**
+     * Determine if a configured webhook authorization secret is required.
+     */
+    protected function webhookAuthorizationRequired(): bool
+    {
+        $required = config('cashier-nets.webhook_authorization_required');
+
+        if ($required !== null) {
+            return filter_var($required, FILTER_VALIDATE_BOOL);
+        }
+
+        return app()->environment('production');
     }
 
     /**

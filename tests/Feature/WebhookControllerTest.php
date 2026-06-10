@@ -5,7 +5,9 @@ namespace Tests\Feature;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
+use RuntimeException;
 use Tests\TestCase;
 use Udviklr\CashierNets\Events\ChargeFailed;
 use Udviklr\CashierNets\Events\ChargeSucceeded;
@@ -14,6 +16,7 @@ use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
 use Udviklr\CashierNets\Subscription;
 use Udviklr\CashierNets\Transaction;
+use Udviklr\CashierNets\WebhookEvent;
 use Workbench\App\Models\User;
 
 class WebhookControllerTest extends TestCase
@@ -30,6 +33,162 @@ class WebhookControllerTest extends TestCase
         ])->assertUnauthorized();
 
         $this->assertDatabaseCount('nets_webhook_events', 0);
+    }
+
+    public function test_it_rejects_webhooks_in_production_when_no_secret_is_configured(): void
+    {
+        config(['cashier-nets.webhook_authorization' => null]);
+        $this->useProductionEnvironment();
+
+        Log::spy();
+
+        $this->postJson('/nets/webhook', $this->checkoutCompletedPayload())
+            ->assertStatus(503);
+
+        $this->assertDatabaseCount('nets_webhook_events', 0);
+
+        Log::shouldHaveReceived('critical')->once();
+    }
+
+    public function test_it_rejects_webhooks_in_production_with_an_invalid_authorization_header(): void
+    {
+        config(['cashier-nets.webhook_authorization' => 'expected-secret']);
+        $this->useProductionEnvironment();
+
+        $this->postJson('/nets/webhook', $this->checkoutCompletedPayload(), [
+            'Authorization' => 'wrong-secret',
+        ])->assertUnauthorized();
+
+        $this->assertDatabaseCount('nets_webhook_events', 0);
+    }
+
+    public function test_the_authorization_required_flag_requires_a_secret_outside_production(): void
+    {
+        config([
+            'cashier-nets.webhook_authorization' => null,
+            'cashier-nets.webhook_authorization_required' => true,
+        ]);
+
+        $this->postJson('/nets/webhook', $this->checkoutCompletedPayload())
+            ->assertStatus(503);
+
+        $this->assertDatabaseCount('nets_webhook_events', 0);
+    }
+
+    public function test_the_authorization_required_flag_allows_a_missing_secret_in_production(): void
+    {
+        config([
+            'cashier-nets.webhook_authorization' => null,
+            'cashier-nets.webhook_authorization_required' => false,
+        ]);
+        $this->useProductionEnvironment();
+
+        $this->postJson('/nets/webhook', $this->checkoutCompletedPayload())
+            ->assertOk()
+            ->assertJson(['received' => true]);
+
+        $this->assertDatabaseCount('nets_webhook_events', 1);
+    }
+
+    public function test_a_listener_exception_leaves_the_event_unprocessed_and_rolls_back_handler_writes(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-04-30T05:04:00Z'),
+        ]);
+
+        Event::listen(ChargeSucceeded::class, function (): void {
+            throw new RuntimeException('Consumer listener failed.');
+        });
+
+        $this->postJson('/nets/webhook', $this->chargeCreatedPayload())
+            ->assertStatus(500);
+
+        $this->assertDatabaseHas('nets_webhook_events', [
+            'nets_event_id' => 'evt_charge_created',
+            'processed_at' => null,
+        ]);
+
+        $this->assertDatabaseCount('nets_transactions', 0);
+
+        $subscription->refresh();
+
+        $this->assertSame('2026-04-30 05:04:00', $subscription->next_charge_at?->setTimezone('UTC')->format('Y-m-d H:i:s'));
+        $this->assertNull($subscription->last_charged_at);
+    }
+
+    public function test_redelivery_after_a_failed_listener_reprocesses_the_event(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-04-30T05:04:00Z'),
+        ]);
+
+        $shouldThrow = true;
+
+        Event::listen(ChargeSucceeded::class, function () use (&$shouldThrow): void {
+            if ($shouldThrow) {
+                throw new RuntimeException('Consumer listener failed.');
+            }
+        });
+
+        $payload = $this->chargeCreatedPayload();
+
+        $this->postJson('/nets/webhook', $payload)->assertStatus(500);
+
+        $shouldThrow = false;
+
+        $this->postJson('/nets/webhook', $payload)
+            ->assertOk()
+            ->assertJson(['received' => true])
+            ->assertJsonMissing(['duplicate' => true]);
+
+        $this->assertDatabaseCount('nets_webhook_events', 1);
+        $this->assertDatabaseCount('nets_transactions', 1);
+
+        $event = WebhookEvent::query()->where('nets_event_id', 'evt_charge_created')->first();
+
+        $this->assertNotNull($event?->processed_at);
+
+        $subscription->refresh();
+
+        $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->status);
+        $this->assertSame('2026-05-30 05:04:00', $subscription->next_charge_at?->setTimezone('UTC')->format('Y-m-d H:i:s'));
+    }
+
+    public function test_it_processes_webhooks_without_an_event_id(): void
+    {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'status' => Subscription::STATUS_PENDING,
+        ]);
+
+        $payload = $this->checkoutCompletedPayload();
+        unset($payload['id']);
+
+        $this->postJson('/nets/webhook', $payload)
+            ->assertOk()
+            ->assertJson(['received' => true]);
+
+        $this->assertSame(Subscription::STATUS_ACTIVE, $subscription->refresh()->status);
+
+        $this->assertDatabaseHas('nets_webhook_events', [
+            'nets_event_id' => null,
+            'event_name' => 'payment.checkout.completed',
+        ]);
     }
 
     public function test_it_records_and_processes_checkout_completed_webhooks(): void
@@ -315,6 +474,23 @@ class WebhookControllerTest extends TestCase
             'status' => Transaction::STATUS_FAILED,
             'failure_code' => 'DECLINED',
         ]);
+    }
+
+    /**
+     * Run the test in a production application environment.
+     *
+     * The environment is restored before teardown so testbench's own console
+     * commands do not trip Laravel's production confirmation prompt.
+     */
+    protected function useProductionEnvironment(): void
+    {
+        $this->withoutMiddleware();
+
+        $this->app['env'] = 'production';
+
+        $this->beforeApplicationDestroyed(function (): void {
+            $this->app['env'] = 'testing';
+        });
     }
 
     /**

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Udviklr\CashierNets\Client\NetsClient;
 use Udviklr\CashierNets\Console\ChargeDueSubscriptionsCommand;
+use Udviklr\CashierNets\Console\RetryPastDueSubscriptionsCommand;
 
 class CashierNetsServiceProvider extends ServiceProvider
 {
@@ -29,6 +30,7 @@ class CashierNetsServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 ChargeDueSubscriptionsCommand::class,
+                RetryPastDueSubscriptionsCommand::class,
             ]);
 
             $this->publishes([
@@ -41,7 +43,7 @@ class CashierNetsServiceProvider extends ServiceProvider
         }
 
         if ($this->shouldRegisterRoutes()) {
-            Route::middleware('web')
+            Route::middleware(config('cashier-nets.webhook_middleware', ['web']))
                 ->prefix(config('cashier-nets.route_prefix', 'nets'))
                 ->group(__DIR__.'/../routes/web.php');
         }

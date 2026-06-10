@@ -43,7 +43,7 @@ Calls to that endpoint will throw `Udviklr\CashierNets\Exceptions\NetsException`
 
 ## Webhook Event Assertions
 
-`CashierNets::fake()` fakes package webhook events, including the generic webhook events and the semantic checkout / charge events:
+`CashierNets::fake()` fakes package webhook events, including the generic webhook events, the semantic checkout / charge events, and the `ChargeAttemptFailed` observability event:
 
 ```php
 CashierNets::assertWebhookReceived();

@@ -1,5 +1,23 @@
 # Release Notes
 
+## [1.2.0] - 2026-06-10
+
+Behavior changes:
+
+- Webhook events are marked processed only after the semantic webhook events have been dispatched, and webhook processing now runs inside a database transaction. A consumer listener exception rolls back package writes, leaves the event unprocessed, and returns HTTP 500 so Nets redelivers — the full handler and listener path re-runs on redelivery, so listeners must be idempotent.
+- Production deployments without `NETS_WEBHOOK_SECRET` now reject webhooks with HTTP 503 and a critical log entry until the secret is configured. Nets treats the 503 as a delivery failure and retries, so queued events flow through once the secret is set. Override the requirement with `NETS_WEBHOOK_AUTH_REQUIRED`.
+- Automatically generated charge idempotency keys are now per attempt (`nets-sub-{id}-{dueAt}-a{attempt}`); each retry of a failed charge reaches Nets with a fresh key and records its own `nets_transactions` row instead of mutating the failed row back to pending. Explicit `idempotency_key` options are unchanged.
+
+Added:
+
+- Subscription lifecycle API: `cancel()` (optionally with a grace-period end date), `expire()`, `resume()`, and an `ended()` helper. `ends_at` is now honored by due-charge selection, `dueForCharge()`, and `charge()`.
+- Atomic webhook event claim with a row lock, so concurrent deliveries of the same Nets event cannot both process it.
+- Past-due retry collection: a `cashier-nets:retry-past-due` command, `Subscription::dueForRetry()` / `dueForRetryCollection()`, and a `retry_policy.backoff_days` schedule (retry n waits `backoff_days[n - 1]` after the most recent failure; the schedule length caps automatic retries).
+- `ChargeAttemptFailed` event, fired when a local charge attempt errors before Nets reports an outcome, and error logs in both charge commands.
+- `CashierNets::terminatePayment()` to terminate open (uncharged) checkout payments.
+- Configurable webhook route middleware via `webhook_middleware` (the default stays `['web']`).
+- The minimum supported Laravel 10 release is now 10.48.
+
 ## [1.1.1] - 2026-06-06
 
 - Fix the package version reported in the Nets API `User-Agent` header, which still read `1.0.0` after the 1.1.0 release.

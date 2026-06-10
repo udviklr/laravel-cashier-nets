@@ -7,21 +7,21 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 use Udviklr\CashierNets\CashierNets;
 
-class ChargeDueSubscriptionsCommand extends Command
+class RetryPastDueSubscriptionsCommand extends Command
 {
     /**
      * The name and signature of the console command.
      *
      * @var string
      */
-    protected $signature = 'cashier-nets:charge-due {--limit=100 : Maximum number of due subscriptions to charge}';
+    protected $signature = 'cashier-nets:retry-past-due {--limit=100 : Maximum number of past due subscriptions to retry}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Charge due Nets subscriptions.';
+    protected $description = 'Retry charging past due Nets subscriptions.';
 
     /**
      * Execute the console command.
@@ -32,7 +32,7 @@ class ChargeDueSubscriptionsCommand extends Command
         $failed = 0;
         $charged = 0;
 
-        $subscriptions = CashierNets::subscriptionModel()->dueForChargeCollection($limit);
+        $subscriptions = CashierNets::subscriptionModel()->dueForRetryCollection($limit);
 
         foreach ($subscriptions as $subscription) {
             try {
@@ -41,21 +41,21 @@ class ChargeDueSubscriptionsCommand extends Command
             } catch (Throwable $throwable) {
                 $failed++;
 
-                Log::error('Cashier Nets failed to charge a due subscription.', [
+                Log::error('Cashier Nets failed to retry a past due subscription charge.', [
                     'subscription_id' => $subscription->getKey(),
                     'nets_subscription_id' => $subscription->nets_subscription_id,
                     'exception' => $throwable,
                 ]);
 
                 $this->error(sprintf(
-                    'Failed charging subscription [%s]: %s',
+                    'Failed retrying subscription [%s]: %s',
                     (string) $subscription->getKey(),
                     $throwable->getMessage(),
                 ));
             }
         }
 
-        $this->info(sprintf('Charged %d due subscription%s.', $charged, $charged === 1 ? '' : 's'));
+        $this->info(sprintf('Retried %d past due subscription%s.', $charged, $charged === 1 ? '' : 's'));
 
         return $failed === 0 ? self::SUCCESS : self::FAILURE;
     }

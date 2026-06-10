@@ -5,12 +5,15 @@ namespace Tests\Feature;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\URL;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
 use RuntimeException;
 use Tests\TestCase;
 use Udviklr\CashierNets\CashierNets;
+use Udviklr\CashierNets\Events\ChargeAttemptFailed;
 use Udviklr\CashierNets\Exceptions\NetsException;
 use Udviklr\CashierNets\Subscription;
 use Udviklr\CashierNets\Transaction;
@@ -313,7 +316,7 @@ class SubscriptionChargeTest extends TestCase
             ->assertExitCode(0);
 
         $this->assertDatabaseHas('nets_transactions', [
-            'idempotency_key' => 'nets-sub-'.$due->id.'-20260517090000',
+            'idempotency_key' => 'nets-sub-'.$due->id.'-20260517090000-a1',
             'nets_subscription_id' => 'sub_due',
             'nets_payment_id' => 'pay_due',
             'nets_charge_id' => 'charge_due',
@@ -321,6 +324,182 @@ class SubscriptionChargeTest extends TestCase
         ]);
 
         Http::assertSentCount(1);
+    }
+
+    public function test_a_retry_after_a_failed_charge_uses_a_new_idempotency_key_and_row(): void
+    {
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::sequence()
+                ->push(['message' => 'Temporarily unavailable.'], 500)
+                ->push(['paymentId' => 'pay_retry', 'chargeId' => 'charge_retry']),
+        ]);
+
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+        ]);
+
+        $baseKey = 'nets-sub-'.$subscription->id.'-20260517090000';
+
+        try {
+            $subscription->charge();
+            $this->fail('The first charge should have thrown a Nets exception.');
+        } catch (NetsException) {
+            // The subscription is now past due with one failed attempt.
+        }
+
+        $subscription->refresh()->charge();
+
+        $this->assertDatabaseHas('nets_transactions', [
+            'idempotency_key' => $baseKey.'-a1',
+            'status' => Transaction::STATUS_FAILED,
+        ]);
+
+        $this->assertDatabaseHas('nets_transactions', [
+            'idempotency_key' => $baseKey.'-a2',
+            'status' => Transaction::STATUS_PENDING,
+            'nets_charge_id' => 'charge_retry',
+        ]);
+
+        $this->assertSame(2, Transaction::query()->count());
+
+        $sentKeys = [];
+
+        Http::assertSent(function (Request $request) use (&$sentKeys): bool {
+            $sentKeys[] = $request->header('Idempotency-Key')[0] ?? null;
+
+            return true;
+        });
+
+        $this->assertSame([$baseKey.'-a1', $baseKey.'-a2'], $sentKeys);
+    }
+
+    public function test_a_second_failed_retry_counts_both_failures(): void
+    {
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::sequence()
+                ->push(['message' => 'Temporarily unavailable.'], 500)
+                ->push(['message' => 'Temporarily unavailable.'], 500),
+        ]);
+
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+        ]);
+
+        foreach (range(1, 2) as $attempt) {
+            try {
+                $subscription->refresh()->charge();
+                $this->fail('The charge should have thrown a Nets exception.');
+            } catch (NetsException) {
+                // Each attempt records its own failed transaction row.
+            }
+        }
+
+        $this->assertSame(2, Transaction::query()->where('status', Transaction::STATUS_FAILED)->count());
+        $this->assertTrue($subscription->refresh()->chargeRetryable());
+
+        config(['cashier-nets.retry_policy.max_attempts' => 2]);
+
+        $this->assertFalse($subscription->chargeRetryable());
+    }
+
+    public function test_a_double_dispatch_of_the_same_attempt_reuses_the_key_and_row(): void
+    {
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::response([
+                'paymentId' => 'pay_dup',
+                'chargeId' => 'charge_dup',
+            ]),
+        ]);
+
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+        ]);
+
+        $subscription->charge();
+        $subscription->refresh()->charge();
+
+        $this->assertSame(1, Transaction::query()->count());
+
+        $expectedKey = 'nets-sub-'.$subscription->id.'-20260517090000-a1';
+
+        Http::assertSent(function (Request $request) use ($expectedKey): bool {
+            return $request->header('Idempotency-Key') === [$expectedKey];
+        });
+
+        Http::assertSentCount(2);
+    }
+
+    public function test_a_failed_charge_attempt_fires_an_observability_event(): void
+    {
+        Event::fake([ChargeAttemptFailed::class]);
+
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::response([
+                'message' => 'Charge was rejected.',
+            ], 402),
+        ]);
+
+        $subscription = $this->createSubscription([
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+        ]);
+
+        try {
+            $subscription->charge();
+            $this->fail('The charge should have thrown a Nets exception.');
+        } catch (NetsException) {
+            // The event carries the failed attempt row and the exception.
+        }
+
+        Event::assertDispatched(ChargeAttemptFailed::class, function (ChargeAttemptFailed $event) use ($subscription): bool {
+            return $event->subscription->is($subscription)
+                && $event->transaction->status === Transaction::STATUS_FAILED
+                && $event->exception instanceof NetsException;
+        });
+    }
+
+    public function test_the_command_reports_charge_failures(): void
+    {
+        Event::fake([ChargeAttemptFailed::class]);
+        Log::spy();
+
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/subscriptions/sub_due/charges' => Http::response([
+                'message' => 'Temporarily unavailable.',
+            ], 500),
+        ]);
+
+        $this->createSubscription([
+            'type' => 'due',
+            'nets_subscription_id' => 'sub_due',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => 9900,
+            'currency' => 'DKK',
+            'interval_days' => 30,
+            'next_charge_at' => Carbon::parse('2026-05-17T09:00:00Z'),
+        ]);
+
+        $this->artisan('cashier-nets:charge-due')
+            ->assertExitCode(1);
+
+        Event::assertDispatched(ChargeAttemptFailed::class);
+        Log::shouldHaveReceived('error')->once();
     }
 
     /**

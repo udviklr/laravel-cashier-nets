@@ -44,6 +44,13 @@ protected $except = [
 ];
 ```
 
+Alternatively, switch the webhook route to a stateless middleware stack so no CSRF exemption is needed:
+
+```php
+// config/cashier-nets.php
+'webhook_middleware' => ['api', 'throttle:60,1'],
+```
+
 ## Webhook Secret
 
 Set a shared secret in `.env`:
@@ -53,6 +60,8 @@ NETS_WEBHOOK_SECRET=your-random-webhook-secret
 ```
 
 The package sends this value to Nets in the webhook notification payload as Nexi's `authorization` field. Nexi sends it back as the incoming `Authorization` header. The webhook controller rejects requests when the configured value and incoming header do not match.
+
+This shared header is the only authentication Nets webhooks carry, so in the `production` environment the secret is required: without it the package rejects all webhooks with HTTP 503 until the secret is configured. See [configuration](configuration.md#webhook-secret) for the `NETS_WEBHOOK_AUTH_REQUIRED` override.
 
 ## Events
 
@@ -66,9 +75,13 @@ The v1 webhook handler processes:
 
 Legacy `payment.charge.created` and `payment.charge.failed` payloads are also handled.
 
-## Idempotency
+## Idempotency and Redelivery
 
-Received webhook payloads are stored in `nets_webhook_events`. When a payload includes an event ID that has already been processed, the package returns a successful duplicate response and does not process the event again.
+Received webhook payloads are stored in `nets_webhook_events`. When a payload includes an event ID that has already been processed, the package returns a successful duplicate response and does not process the event again. The event row is claimed atomically and locked while it is processed, so concurrent deliveries of the same event cannot both process it.
+
+Webhook processing — the package handler, the semantic events, and the `processed_at` marker — runs inside one database transaction. If one of your listeners throws, the package writes roll back, the event stays unprocessed, and the request returns HTTP 500. Nets then redelivers the event and the full path re-runs from a clean slate.
+
+This makes redelivery the error-recovery contract: a listener that throws will see the same event again, so listeners must be idempotent. A listener that completes without throwing will not see that event again.
 
 ## Package Events
 
@@ -165,5 +178,7 @@ Common webhook issues:
 
 - `419` responses usually mean the webhook route is still protected by CSRF middleware.
 - `401` responses mean the incoming `Authorization` header does not match `NETS_WEBHOOK_SECRET`.
+- `503` responses mean the environment requires a webhook secret and `NETS_WEBHOOK_SECRET` is not set.
+- `500` responses with the event row left unprocessed mean one of your webhook listeners threw; Nets will redeliver the event.
 - Missing webhook calls often mean `APP_URL` was not public HTTPS when the checkout or charge was created.
 - Subscriptions stuck in `pending` usually mean `payment.checkout.completed` has not been received or matched to the local payment ID, or the checkout-completed webhook did not include a Nets subscription ID and the hosted callback has not finalized the subscription yet.
