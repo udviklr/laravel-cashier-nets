@@ -179,3 +179,23 @@ class EnsureUserIsSubscribed
     }
 }
 ```
+
+## Abandoning Pending Checkouts
+
+When your application abandons a pending checkout, terminate the Nets payment so the hosted or embedded checkout cannot still be completed in another browser tab:
+
+```php
+use Udviklr\CashierNets\CashierNets;
+use Udviklr\CashierNets\Exceptions\NetsException;
+
+try {
+    CashierNets::terminatePayment($subscription->nets_payment_id);
+} catch (NetsException) {
+    // The payment was already charged or terminated; safe to ignore
+    // in a best-effort abandon flow.
+}
+
+$subscription->delete();
+```
+
+Nets only allows terminating a payment before a charge exists; a "cannot terminate" response surfaces as a `NetsException`.

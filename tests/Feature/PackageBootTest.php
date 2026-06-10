@@ -21,6 +21,7 @@ class PackageBootTest extends TestCase
         $this->assertNotNull($route);
         $this->assertSame('nets/webhook', $route->uri());
         $this->assertSame(['POST'], $route->methods());
+        $this->assertSame(['web'], $route->middleware());
     }
 
     public function test_it_resolves_the_sandbox_urls(): void

@@ -9,7 +9,7 @@ use Udviklr\CashierNets\Client\NetsClient;
 
 class CashierNets
 {
-    public const VERSION = '1.1.1';
+    public const VERSION = '1.2.0';
 
     /**
      * Indicates if Cashier Nets routes will be registered.
@@ -86,6 +86,26 @@ class CashierNets
     public static function api(string $method, string $uri, ?array $payload = null, array $options = []): Response
     {
         return static::client()->request($method, $uri, $payload, $options);
+    }
+
+    /**
+     * Terminate an open (uncharged) Nets payment.
+     *
+     * Nets only allows terminating a payment before a charge exists. A
+     * "cannot terminate" response surfaces as a NetsException so abandon
+     * flows can treat the call as best-effort and ignore it.
+     *
+     * @throws \Udviklr\CashierNets\Exceptions\NetsException
+     */
+    public static function terminatePayment(string $paymentId): void
+    {
+        $paymentId = trim($paymentId);
+
+        if ($paymentId === '') {
+            throw new InvalidArgumentException('A Nets payment ID is required.');
+        }
+
+        static::api('PUT', 'v1/payments/'.$paymentId.'/terminate');
     }
 
     /**

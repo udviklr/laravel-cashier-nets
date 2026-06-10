@@ -3,6 +3,7 @@
 namespace Udviklr\CashierNets;
 
 use Carbon\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -11,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
 use RuntimeException;
+use Udviklr\CashierNets\Events\ChargeAttemptFailed;
 
 /**
  * @property string $billable_type
@@ -179,13 +181,76 @@ class Subscription extends Model
     }
 
     /**
+     * Determine if the subscription has ended.
+     */
+    public function ended(): bool
+    {
+        return $this->ends_at !== null && $this->ends_at->isPast();
+    }
+
+    /**
      * Determine if the subscription should be charged.
      */
     public function dueForCharge(): bool
     {
         return $this->active()
+            && ! $this->ended()
             && $this->next_charge_at !== null
             && $this->next_charge_at->isPast();
+    }
+
+    /**
+     * Cancel the subscription.
+     *
+     * The next charge date is kept so resume() is a pure status flip. Pass a
+     * future end date to keep the subscription valid through a grace period.
+     */
+    public function cancel(?CarbonInterface $endsAt = null): self
+    {
+        $this->forceFill([
+            'status' => self::STATUS_CANCELED,
+            'ends_at' => $endsAt ?? now(),
+        ])->save();
+
+        return $this;
+    }
+
+    /**
+     * Expire the subscription. This is a terminal state.
+     */
+    public function expire(): self
+    {
+        $this->forceFill([
+            'status' => self::STATUS_EXPIRED,
+            'next_charge_at' => null,
+            'ends_at' => $this->ends_at ?? now(),
+        ])->save();
+
+        return $this;
+    }
+
+    /**
+     * Resume a canceled subscription.
+     */
+    public function resume(?CarbonInterface $nextChargeAt = null): self
+    {
+        if (! $this->canceled()) {
+            throw new RuntimeException('Only canceled subscriptions may be resumed.');
+        }
+
+        $nextChargeAt ??= $this->next_charge_at;
+
+        if ($nextChargeAt === null) {
+            throw new RuntimeException('A resumed subscription requires a next charge date.');
+        }
+
+        $this->forceFill([
+            'status' => self::STATUS_ACTIVE,
+            'ends_at' => null,
+            'next_charge_at' => $nextChargeAt,
+        ])->save();
+
+        return $this;
     }
 
     /**
@@ -216,7 +281,19 @@ class Subscription extends Model
             throw new InvalidArgumentException('A valid subscription charge currency is required.');
         }
 
-        $idempotencyKey = $options['idempotency_key'] ?? $this->chargeIdempotencyKey();
+        $idempotencyKey = $options['idempotency_key'] ?? null;
+
+        if ($idempotencyKey === null) {
+            $dueKey = $this->chargeDueKey();
+
+            $idempotencyKey = $dueKey.'-a'.$this->chargeAttemptNumber($dueKey);
+
+            // Stamp the due-period base on the attempt row so future attempts
+            // for the same period can be counted.
+            $options['metadata'] = array_merge($options['metadata'] ?? [], [
+                'charge_due_key' => $dueKey,
+            ]);
+        }
 
         // Build (and validate) the payload before recording a pending charge, so a malformed
         // order item fails fast without marking the subscription past due.
@@ -243,6 +320,8 @@ class Subscription extends Model
                 'status' => self::STATUS_PAST_DUE,
                 'failed_at' => now(),
             ])->save();
+
+            event(new ChargeAttemptFailed($this, $transaction, $throwable));
 
             throw $throwable;
         }
@@ -358,6 +437,10 @@ class Subscription extends Model
             throw new RuntimeException('The subscription cannot be charged in its current status.');
         }
 
+        if ($this->ended()) {
+            throw new RuntimeException('The subscription has ended and cannot be charged.');
+        }
+
         if ($this->pastDue() && ! $this->chargeRetryable()) {
             throw new RuntimeException('The subscription charge is not retryable.');
         }
@@ -450,13 +533,33 @@ class Subscription extends Model
     }
 
     /**
-     * Generate a stable idempotency key for the current due period.
+     * Generate the stable idempotency key base for the current due period.
      */
-    protected function chargeIdempotencyKey(): string
+    protected function chargeDueKey(): string
     {
         $dueAt = $this->next_charge_at?->copy()->utc()->format('YmdHis') ?? now()->utc()->format('YmdHis');
 
         return 'nets-sub-'.$this->getKey().'-'.$dueAt;
+    }
+
+    /**
+     * Get the attempt number for the next charge against a due-period key.
+     *
+     * Only failed attempts bump the number: a retry reaches Nets with a fresh
+     * idempotency key and its own transaction row, while a double dispatch of
+     * the same attempt reuses the previous key and row.
+     */
+    protected function chargeAttemptNumber(string $dueKey): int
+    {
+        $transactionModel = CashierNets::$transactionModel;
+
+        return 1 + $transactionModel::query()
+            ->where('billable_type', $this->billable_type)
+            ->where('billable_id', $this->billable_id)
+            ->where('nets_subscription_id', $this->nets_subscription_id)
+            ->where('status', Transaction::STATUS_FAILED)
+            ->where('metadata->charge_due_key', $dueKey)
+            ->count();
     }
 
     /**
@@ -548,7 +651,11 @@ class Subscription extends Model
     {
         $query->where('status', self::STATUS_ACTIVE)
             ->whereNotNull('next_charge_at')
-            ->where('next_charge_at', '<=', Carbon::now());
+            ->where('next_charge_at', '<=', Carbon::now())
+            ->where(function (Builder $query): void {
+                $query->whereNull('ends_at')
+                    ->orWhere('ends_at', '>', Carbon::now());
+            });
     }
 
     /**
@@ -558,11 +665,87 @@ class Subscription extends Model
      */
     public function dueForChargeCollection(int $limit): EloquentCollection
     {
-        return $this->newQuery()
-            ->where('status', self::STATUS_ACTIVE)
+        $query = $this->newQuery();
+
+        $this->scopeDueForCharge($query);
+
+        return $query->limit(max(1, $limit))->get();
+    }
+
+    /**
+     * Determine if a past-due subscription is ready for an automatic retry.
+     *
+     * Attempt n waits backoff_days[n - 1] after the most recent failure;
+     * once the failure count passes the end of the array the subscription
+     * stays past due until a consumer intervenes.
+     */
+    public function dueForRetry(): bool
+    {
+        if (! $this->pastDue()
+            || $this->ended()
+            || ! $this->nets_subscription_id
+            || $this->next_charge_at === null
+            || ! $this->chargeRetryable()) {
+            return false;
+        }
+
+        $backoffDays = array_values((array) config('cashier-nets.retry_policy.backoff_days', []));
+
+        $lastFailure = $this->chargeFailuresQuery()->latest('created_at')->first();
+
+        if (! $lastFailure instanceof Transaction) {
+            return false;
+        }
+
+        $failures = $this->chargeFailuresQuery()->count();
+
+        if ($failures > count($backoffDays)) {
+            return false;
+        }
+
+        $waitDays = (int) $backoffDays[$failures - 1];
+
+        $lastFailedAt = $lastFailure->billed_at ?? $lastFailure->created_at;
+
+        return $lastFailedAt !== null
+            && $lastFailedAt->copy()->addDays($waitDays)->isPast();
+    }
+
+    /**
+     * Get past-due subscriptions that are ready for an automatic retry charge.
+     *
+     * @return \Illuminate\Database\Eloquent\Collection<int, static>
+     */
+    public function dueForRetryCollection(int $limit): EloquentCollection
+    {
+        $limit = max(1, $limit);
+
+        $query = $this->newQuery()
+            ->where('status', self::STATUS_PAST_DUE)
+            ->where(function (Builder $query): void {
+                $query->whereNull('ends_at')
+                    ->orWhere('ends_at', '>', Carbon::now());
+            });
+
+        $query->whereNotNull('nets_subscription_id')
             ->whereNotNull('next_charge_at')
-            ->where('next_charge_at', '<=', Carbon::now())
-            ->limit(max(1, $limit))
-            ->get();
+            ->orderBy('failed_at');
+
+        $selected = $this->newCollection();
+
+        /** @var static $subscription */
+        foreach ($query->cursor() as $subscription) {
+            if (! $subscription->dueForRetry()) {
+                continue;
+            }
+
+            $selected->push($subscription);
+
+            if ($selected->count() >= $limit) {
+                break;
+            }
+        }
+
+        return $selected;
     }
 }

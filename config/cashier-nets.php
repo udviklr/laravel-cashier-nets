@@ -45,7 +45,26 @@ return [
 
     'webhook_path' => 'webhook',
 
+    /*
+    | Middleware applied to the package webhook route. The default keeps the
+    | historical 'web' group for backwards compatibility. A stateless stack
+    | such as ['api', 'throttle:60,1'] is recommended for the machine-to-
+    | machine endpoint; if you keep the web group, exempt the route from
+    | CSRF verification in your application.
+    */
+
+    'webhook_middleware' => ['web'],
+
     'webhook_authorization' => env('NETS_WEBHOOK_SECRET'),
+
+    /*
+    | The shared Authorization header is the only authentication Nets webhooks
+    | carry. When this flag is true, webhooks are rejected with HTTP 503 until
+    | a webhook authorization secret is configured. When null, the secret is
+    | required in the production environment and optional everywhere else.
+    */
+
+    'webhook_authorization_required' => env('NETS_WEBHOOK_AUTH_REQUIRED'),
 
     'webhook_events' => [
         'payment.created',
@@ -67,6 +86,11 @@ return [
     */
 
     'retry_policy' => [
+        // Automatic past-due retry backoff: retry n waits backoff_days[n - 1]
+        // after the most recent failure. Once the failure count passes the end
+        // of the array, cashier-nets:retry-past-due stops selecting the
+        // subscription and it stays past due until a consumer intervenes.
+        'backoff_days' => [1, 3, 5],
         'max_attempts' => 15,
         'window_days' => 30,
         'non_retryable_response_codes' => [

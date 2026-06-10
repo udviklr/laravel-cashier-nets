@@ -21,6 +21,9 @@ Currently supported:
 - Local customer, subscription, transaction, and webhook event models.
 - Webhook-driven local subscription state.
 - Manual and scheduled subscription charges.
+- Subscription lifecycle management (`cancel()`, `expire()`, `resume()`).
+- Automatic past-due retry collection with configurable backoff.
+- Terminating open checkout payments.
 - Package fakes for tests.
 
 Deferred:
@@ -29,7 +32,7 @@ Deferred:
 - One-time checkout helpers.
 - Bulk subscription charges.
 - Frontend checkout components.
-- Plan swapping and cancellation APIs.
+- Plan swapping APIs.
 - Refunds, credits, and invoice rendering.
 
 Do not assume full Laravel Cashier Stripe or Cashier Paddle API parity. This package is Cashier-inspired but Nets-native.

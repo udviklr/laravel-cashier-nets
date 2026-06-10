@@ -66,4 +66,47 @@ class NetsClientTest extends TestCase
 
         CashierNets::api('POST', 'v1/payments', []);
     }
+
+    public function test_it_terminates_an_open_payment(): void
+    {
+        Http::fake([
+            CashierNets::apiUrl().'/v1/payments/pay_123/terminate' => Http::response(null, 204),
+        ]);
+
+        CashierNets::terminatePayment('pay_123');
+
+        Http::assertSent(function (Request $request) {
+            return $request->url() === 'https://test.api.dibspayment.eu/v1/payments/pay_123/terminate'
+                && $request->method() === 'PUT'
+                && $request->header('Authorization') === ['test-secret-key'];
+        });
+    }
+
+    public function test_terminating_a_charged_payment_throws_a_nets_exception(): void
+    {
+        Http::fake([
+            CashierNets::apiUrl().'/v1/payments/pay_123/terminate' => Http::response([
+                'message' => 'The payment cannot be terminated.',
+            ], 400),
+        ]);
+
+        $this->expectException(NetsException::class);
+        $this->expectExceptionMessage('The payment cannot be terminated.');
+
+        CashierNets::terminatePayment('pay_123');
+    }
+
+    public function test_terminating_a_payment_requires_a_payment_id(): void
+    {
+        Http::fake();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('A Nets payment ID is required.');
+
+        try {
+            CashierNets::terminatePayment('  ');
+        } finally {
+            Http::assertNothingSent();
+        }
+    }
 }

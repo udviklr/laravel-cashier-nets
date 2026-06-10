@@ -75,6 +75,20 @@ CashierNets::$registersRoutes = false;
 
 If you disable the default route, register your own route to `Udviklr\CashierNets\Http\Controllers\WebhookController`.
 
+The middleware applied to the webhook route is configurable:
+
+```php
+'webhook_middleware' => ['web'],
+```
+
+The default keeps the historical `web` group for backwards compatibility. A stateless stack is recommended for the machine-to-machine endpoint:
+
+```php
+'webhook_middleware' => ['api', 'throttle:60,1'],
+```
+
+If you keep the `web` group, exempt the route from CSRF verification in your application (see [webhooks](webhooks.md#csrf-protection)).
+
 ## Webhook Secret
 
 Set a shared webhook secret:
@@ -85,7 +99,19 @@ NETS_WEBHOOK_SECRET=your-random-webhook-secret
 
 When the package creates Nets payments or subscription charges, it includes this value in each webhook notification as Nexi's `authorization` field. Nexi sends the same value as the incoming `Authorization` header, and the package compares it exactly.
 
-If `NETS_WEBHOOK_SECRET` is empty, the package accepts incoming webhooks without this header. That can be useful in isolated tests, but production applications should set it.
+In the `production` environment the secret is required: when it is missing, the package rejects every webhook with HTTP 503 and writes a critical log entry until the secret is configured. Nets treats the 503 as a delivery failure and retries, so queued events flow through once the secret is set. In other environments an empty secret accepts incoming webhooks without the header, which is useful in isolated tests.
+
+You can override where the secret is required:
+
+```ini
+# Require the secret in every environment:
+NETS_WEBHOOK_AUTH_REQUIRED=true
+
+# Never require the secret (not recommended in production):
+NETS_WEBHOOK_AUTH_REQUIRED=false
+```
+
+When the flag is unset, the secret is required exactly in the `production` environment.
 
 `NETS_WEBHOOK_AUTHORIZATION` is still read as a fallback for older installs, but new applications should use `NETS_WEBHOOK_SECRET`.
 
@@ -111,6 +137,7 @@ Failed renewal charge retry behavior is controlled by:
 
 ```php
 'retry_policy' => [
+    'backoff_days' => [1, 3, 5],
     'max_attempts' => 15,
     'window_days' => 30,
     'non_retryable_response_codes' => [
@@ -127,6 +154,8 @@ Failed renewal charge retry behavior is controlled by:
 ```
 
 The package blocks retries for configured non-retryable response codes and limits failed retry attempts within the rolling window.
+
+`backoff_days` drives the `cashier-nets:retry-past-due` command: retry `n` waits `backoff_days[n - 1]` after the most recent failure, and once the failure count passes the end of the array the subscription is no longer retried automatically. See [subscriptions and renewals](subscriptions-and-renewals.md#retrying-past-due-subscriptions).
 
 ## Custom Models
 
