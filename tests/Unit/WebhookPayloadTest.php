@@ -60,6 +60,32 @@ class WebhookPayloadTest extends TestCase
         $this->assertSame('2026-04-30 05:04:00', $payload->occurredAt()?->utc()->format('Y-m-d H:i:s'));
     }
 
+    public function test_it_extracts_the_refund_identifier(): void
+    {
+        $payload = WebhookPayload::from([
+            'event' => 'payment.refund.completed',
+            'data' => [
+                'paymentId' => 'pay_123',
+                'chargeId' => 'charge_123',
+                'refundId' => 'refund_123',
+                'amount' => [
+                    'amount' => '2500',
+                    'currency' => 'DKK',
+                ],
+            ],
+        ]);
+
+        $this->assertSame('refund_123', $payload->refundId());
+        $this->assertSame('charge_123', $payload->chargeId());
+        $this->assertSame(2500, $payload->amount());
+        $this->assertSame('DKK', $payload->currency());
+    }
+
+    public function test_it_returns_null_when_no_refund_identifier_is_present(): void
+    {
+        $this->assertNull(WebhookPayload::from(['data' => []])->refundId());
+    }
+
     public function test_it_returns_null_for_missing_or_invalid_optional_values(): void
     {
         $payload = WebhookPayload::from([

@@ -21,6 +21,7 @@ The package focuses on reusable subscription plumbing: creating hosted or embedd
 - [Checkouts](docs/checkouts.md)
 - [Webhooks](docs/webhooks.md)
 - [Subscriptions and Renewals](docs/subscriptions-and-renewals.md)
+- [Refunds](docs/refunds.md)
 - [Testing](docs/testing.md)
 - [Upgrading](docs/upgrading.md)
 

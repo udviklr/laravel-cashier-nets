@@ -11,6 +11,9 @@ use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Events\ChargeFailed;
 use Udviklr\CashierNets\Events\ChargeSucceeded;
 use Udviklr\CashierNets\Events\CheckoutCompleted;
+use Udviklr\CashierNets\Events\RefundCompleted;
+use Udviklr\CashierNets\Events\RefundFailed;
+use Udviklr\CashierNets\Events\RefundInitiated;
 use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
 use Udviklr\CashierNets\WebhookEvent;
@@ -156,6 +159,9 @@ class WebhookController extends Controller
             'payment.checkout.completed' => CheckoutCompleted::class,
             'payment.charge.created', 'payment.charge.created.v2' => ChargeSucceeded::class,
             'payment.charge.failed', 'payment.charge.failed.v2', 'payment.reservation.failed' => ChargeFailed::class,
+            'payment.refund.initiated' => RefundInitiated::class,
+            'payment.refund.completed' => RefundCompleted::class,
+            'payment.refund.failed' => RefundFailed::class,
             default => null,
         };
     }

@@ -8,6 +8,7 @@ use RuntimeException;
 use Tests\TestCase;
 use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Exceptions\NetsException;
+use Udviklr\CashierNets\Exceptions\RefundException;
 
 class NetsClientTest extends TestCase
 {
@@ -105,6 +106,58 @@ class NetsClientTest extends TestCase
 
         try {
             CashierNets::terminatePayment('  ');
+        } finally {
+            Http::assertNothingSent();
+        }
+    }
+
+    public function test_it_refunds_a_charge_with_an_idempotency_key(): void
+    {
+        Http::fake([
+            CashierNets::apiUrl().'/v1/charges/charge_123/refunds' => Http::response(['refundId' => 'refund_123'], 201),
+        ]);
+
+        $response = CashierNets::client()->refundCharge('charge_123', 9900, 'nets-refund-charge_123-a1');
+
+        $this->assertSame('refund_123', $response['refundId']);
+
+        Http::assertSent(function (Request $request) {
+            $payload = json_decode($request->body(), true);
+
+            return $request->url() === 'https://test.api.dibspayment.eu/v1/charges/charge_123/refunds'
+                && $request->method() === 'POST'
+                && $request->header('Idempotency-Key') === ['nets-refund-charge_123-a1']
+                && $payload['amount'] === 9900
+                && ! array_key_exists('orderItems', $payload);
+        });
+    }
+
+    public function test_it_throws_a_refund_exception_for_failed_refund_responses(): void
+    {
+        Http::fake([
+            CashierNets::apiUrl().'/v1/charges/charge_123/refunds' => Http::response(['message' => 'Charge is not settled.'], 400),
+        ]);
+
+        try {
+            CashierNets::client()->refundCharge('charge_123', 9900, 'idem');
+            $this->fail('Expected a RefundException.');
+        } catch (RefundException $exception) {
+            $this->assertInstanceOf(NetsException::class, $exception);
+            $this->assertSame('Charge is not settled.', $exception->getMessage());
+            $this->assertSame(400, $exception->getCode());
+            $this->assertSame(['message' => 'Charge is not settled.'], $exception->body());
+        }
+    }
+
+    public function test_refunding_rejects_a_non_positive_amount(): void
+    {
+        Http::fake();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('greater than zero');
+
+        try {
+            CashierNets::client()->refundCharge('charge_123', 0, 'idem');
         } finally {
             Http::assertNothingSent();
         }

@@ -1,5 +1,22 @@
 # Release Notes
 
+## [1.3.0] - 2026-06-14
+
+Added:
+
+- Refund initiation: a low-level `NetsClient::refundCharge()` (validates `amount > 0`, sends the `Idempotency-Key` header) and a high-level `Transaction::refund(?int $amount = null, array $orderItems = [], ?string $idempotencyKey = null)`. A null amount issues a full refund of the charge; a smaller amount issues a partial refund, synthesizing a single zero-tax order item or validating caller-supplied VAT-aware `orderItems` against the existing Nets invariants. Refund confirmation is asynchronous and arrives via webhooks.
+- `Transaction::remainingRefundable()`, so partial refunds are validated against the amount still refundable on the charge (a charge may be partially refunded multiple times).
+- A `nets_refunds` table and `Refund` model (`STATUS_PENDING` / `STATUS_COMPLETED` / `STATUS_FAILED`) tracking each refund attempt, linked to its parent charge transaction.
+- Semantic webhook events `RefundInitiated`, `RefundCompleted`, and `RefundFailed`, plus `payment.refund.initiated` / `payment.refund.completed` / `payment.refund.failed` wiring in the webhook controller and handler. A completed refund records the refund row, and once completed refunds cover the charge the charge transaction is flipped to `STATUS_REFUNDED`. The three event names are appended to the default `webhook_events` config. Because Nets sends `data.chargeId` only on `payment.refund.initiated` (the completed/failed events omit it), the handler resolves the charge from the locally recorded refund or the `paymentId`, so completions still flip the charge to refunded. The flip is serialized with a row lock so concurrent partial completions cannot both miss full coverage.
+- `WebhookPayload::refundId()` accessor.
+- `RefundException` (extends `NetsException`), thrown on a failed refund request and carrying the Nets status code and decoded error body via `NetsException::body()`.
+
+Notes:
+
+- Reusing a refund `idempotency_key` for a different amount is now rejected (it previously returned the existing refund or silently rewrote the reservation). Retry with the same amount, or use a new key.
+- A late or duplicate refund webhook can no longer overwrite the amount, currency, or failure of a refund row that has already moved to a stronger state.
+- `NetsException` is no longer `final` so `RefundException` can extend it, and its constructor signature is now `(string $message, int $code, ?array $body, ?Throwable $previous)`. Instances are still expected to be built via `NetsException::fromResponse()`; construct via the factory rather than `new`.
+
 ## [1.2.0] - 2026-06-10
 
 Behavior changes:

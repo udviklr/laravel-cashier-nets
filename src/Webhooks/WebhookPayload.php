@@ -74,6 +74,14 @@ final class WebhookPayload
     }
 
     /**
+     * Get the refund identifier from the payload.
+     */
+    public function refundId(): ?string
+    {
+        return $this->stringValue(Arr::get($this->payload, 'data.refundId'));
+    }
+
+    /**
      * Get the subscription identifier from the payload.
      */
     public function subscriptionId(): ?string

@@ -72,6 +72,9 @@ return [
         'payment.charge.created.v2',
         'payment.charge.failed.v2',
         'payment.reservation.failed',
+        'payment.refund.initiated',
+        'payment.refund.completed',
+        'payment.refund.failed',
     ],
 
     /*

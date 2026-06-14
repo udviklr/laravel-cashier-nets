@@ -4,13 +4,36 @@ namespace Udviklr\CashierNets\Exceptions;
 
 use Exception;
 use Illuminate\Http\Client\Response;
+use Throwable;
 
-final class NetsException extends Exception
+class NetsException extends Exception
 {
+    /**
+     * The decoded Nets error response body, when available.
+     *
+     * @var array<string, mixed>|null
+     */
+    protected ?array $body;
+
+    /**
+     * The constructor is final so fromResponse()'s `new static(...)` is valid for
+     * every subclass (e.g. RefundException). Note the signature intentionally
+     * inserts $body before $previous, diverging from the base Exception's
+     * (message, code, previous): always construct via fromResponse(), not by hand.
+     *
+     * @param  array<string, mixed>|null  $body
+     */
+    final public function __construct(string $message = '', int $code = 0, ?array $body = null, ?Throwable $previous = null)
+    {
+        parent::__construct($message, $code, $previous);
+
+        $this->body = $body;
+    }
+
     /**
      * Create an exception instance from a failed HTTP response.
      */
-    public static function fromResponse(Response $response): self
+    public static function fromResponse(Response $response): static
     {
         $payload = $response->json();
 
@@ -20,7 +43,17 @@ final class NetsException extends Exception
             $message = static::messageFromPayload($payload, $message);
         }
 
-        return new self($message, $response->status());
+        return new static($message, $response->status(), is_array($payload) ? $payload : null);
+    }
+
+    /**
+     * Get the decoded Nets error response body, when available.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function body(): ?array
+    {
+        return $this->body;
     }
 
     /**
