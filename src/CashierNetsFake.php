@@ -10,6 +10,9 @@ use Udviklr\CashierNets\Events\ChargeAttemptFailed;
 use Udviklr\CashierNets\Events\ChargeFailed;
 use Udviklr\CashierNets\Events\ChargeSucceeded;
 use Udviklr\CashierNets\Events\CheckoutCompleted;
+use Udviklr\CashierNets\Events\RefundCompleted;
+use Udviklr\CashierNets\Events\RefundFailed;
+use Udviklr\CashierNets\Events\RefundInitiated;
 use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
 
@@ -44,6 +47,9 @@ final class CashierNetsFake
             ChargeFailed::class,
             ChargeSucceeded::class,
             CheckoutCompleted::class,
+            RefundCompleted::class,
+            RefundFailed::class,
+            RefundInitiated::class,
             WebhookHandled::class,
             WebhookReceived::class,
         ], Arr::wrap($events)));

@@ -9,7 +9,7 @@ use Udviklr\CashierNets\Client\NetsClient;
 
 class CashierNets
 {
-    public const VERSION = '1.2.0';
+    public const VERSION = '1.3.0';
 
     /**
      * Indicates if Cashier Nets routes will be registered.
@@ -43,6 +43,13 @@ class CashierNets
     public static string $transactionModel = Transaction::class;
 
     /**
+     * The refund model class name.
+     *
+     * @var class-string<\Udviklr\CashierNets\Refund>
+     */
+    public static string $refundModel = Refund::class;
+
+    /**
      * The webhook event model class name.
      *
      * @var class-string<\Udviklr\CashierNets\WebhookEvent>
@@ -73,6 +80,16 @@ class CashierNets
     public static function transactionModel(): Transaction
     {
         $class = static::$transactionModel;
+
+        return new $class;
+    }
+
+    /**
+     * Create a new refund model instance.
+     */
+    public static function refundModel(): Refund
+    {
+        $class = static::$refundModel;
 
         return new $class;
     }

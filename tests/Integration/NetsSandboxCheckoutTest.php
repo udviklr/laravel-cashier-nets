@@ -11,6 +11,7 @@ use PHPUnit\Framework\Attributes\Group;
 use Tests\TestCase;
 use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Exceptions\NetsException;
+use Udviklr\CashierNets\Refund;
 use Udviklr\CashierNets\Subscription;
 use Udviklr\CashierNets\Transaction;
 use Workbench\App\Models\User;
@@ -276,6 +277,87 @@ class NetsSandboxCheckoutTest extends TestCase
         if ($invoiceNumber !== null) {
             $this->assertSame($invoiceNumber, $transaction->metadata['invoice_number'] ?? null);
         }
+    }
+
+    #[Group('nets-refund')]
+    public function test_it_can_issue_a_refund_against_a_settled_charge_in_the_nets_sandbox(): void
+    {
+        $this->configureNetsSandbox();
+
+        // A refund needs a real SETTLED charge with refundable balance. Completing
+        // a hosted checkout requires a card, so the charge id is supplied out of
+        // band; the test refunds a small amount with a unique key so it can be
+        // re-run against the same charge until that balance is exhausted.
+        $paymentId = $this->env('NETS_TEST_PAYMENT_ID');
+        $chargeId = $this->env('NETS_TEST_CHARGE_ID') ?? $this->resolveSettledChargeId($paymentId);
+
+        if ($chargeId === null) {
+            $this->markTestSkipped('Set NETS_TEST_CHARGE_ID (a settled charge with refundable balance), or NETS_TEST_PAYMENT_ID whose charge is resolved automatically, to run the live refund test.');
+        }
+
+        $user = $this->createBillableUser();
+
+        $transaction = $user->netsTransactions()->create([
+            'nets_payment_id' => $paymentId ?? $this->env('NETS_TEST_REFUND_PAYMENT_ID'),
+            'nets_charge_id' => $chargeId,
+            'status' => Transaction::STATUS_SUCCEEDED,
+            'amount' => $this->testAmount(),
+            'currency' => $this->testCurrency(),
+        ]);
+
+        $amount = $this->refundTestAmount();
+        $idempotencyKey = 'cashier-nets-refund-'.Str::uuid();
+
+        // Issues a live POST /v1/charges/{chargeId}/refunds against the sandbox.
+        $refund = $transaction->refund($amount, [], $idempotencyKey);
+
+        $refund->refresh();
+
+        $this->assertSame(Refund::STATUS_PENDING, $refund->status);
+        $this->assertNotSame('', (string) $refund->nets_refund_id, 'Nets did not return a refundId for the refund.');
+        $this->assertSame($amount, $refund->amount);
+        $this->assertSame($this->testCurrency(), $refund->currency);
+        $this->assertSame($chargeId, $refund->nets_charge_id);
+        $this->assertSame($idempotencyKey, $refund->idempotency_key);
+        $this->assertSame($transaction->id, (int) $refund->nets_transaction_id);
+
+        $this->assertDatabaseHas('nets_refunds', [
+            'nets_refund_id' => $refund->nets_refund_id,
+            'nets_charge_id' => $chargeId,
+            'status' => Refund::STATUS_PENDING,
+            'amount' => $amount,
+        ]);
+
+        // Confirmation is asynchronous: the row settles to completed/failed only
+        // when the matching payment.refund.* webhook is delivered to a public URL,
+        // which is verified manually rather than in this self-contained test.
+    }
+
+    protected function refundTestAmount(): int
+    {
+        return (int) (getenv('NETS_TEST_REFUND_AMOUNT') ?: 100);
+    }
+
+    /**
+     * Resolve a charge id from a payment id by reading the payment's charges.
+     */
+    protected function resolveSettledChargeId(?string $paymentId): ?string
+    {
+        if ($paymentId === null) {
+            return null;
+        }
+
+        $payment = CashierNets::api('GET', 'v1/payments/'.$paymentId)->json();
+
+        foreach ((array) data_get($payment, 'payment.charges', []) as $charge) {
+            $chargeId = data_get($charge, 'chargeId');
+
+            if (is_string($chargeId) && $chargeId !== '') {
+                return $chargeId;
+            }
+        }
+
+        return null;
     }
 
     protected function configureNetsSandbox(bool $requireCheckoutKey = false, bool $enableWebhooks = false): void

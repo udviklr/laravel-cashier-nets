@@ -72,8 +72,13 @@ The v1 webhook handler processes:
 - `payment.charge.created.v2`
 - `payment.charge.failed.v2`
 - `payment.reservation.failed`
+- `payment.refund.initiated`
+- `payment.refund.completed`
+- `payment.refund.failed`
 
 Legacy `payment.charge.created` and `payment.charge.failed` payloads are also handled.
+
+See [refunds](refunds.md) for how refund events update package state.
 
 ## Idempotency and Redelivery
 
@@ -118,9 +123,12 @@ For application state sync, prefer the semantic events that are dispatched after
 Udviklr\CashierNets\Events\CheckoutCompleted
 Udviklr\CashierNets\Events\ChargeSucceeded
 Udviklr\CashierNets\Events\ChargeFailed
+Udviklr\CashierNets\Events\RefundInitiated
+Udviklr\CashierNets\Events\RefundCompleted
+Udviklr\CashierNets\Events\RefundFailed
 ```
 
-These events expose a parsed payload, the stored `WebhookEvent`, and any resolved package `Subscription` or `Transaction`:
+These events expose a parsed payload, the stored `WebhookEvent`, and any resolved package `Subscription` or `Transaction`. The three refund events additionally expose `refund()`, returning the resolved package `Refund`:
 
 ```php
 namespace App\Listeners;
@@ -153,6 +161,7 @@ $payload = WebhookPayload::from($rawPayload);
 $payload->eventName();
 $payload->paymentId();
 $payload->chargeId();
+$payload->refundId();
 $payload->subscriptionId();
 $payload->amount();
 $payload->currency();
