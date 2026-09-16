@@ -137,6 +137,7 @@ Failed renewal charge retry behavior is controlled by:
 
 ```php
 'retry_policy' => [
+    'pending_grace_seconds' => 120,
     'backoff_days' => [1, 3, 5],
     'max_attempts' => 15,
     'window_days' => 30,
@@ -156,6 +157,19 @@ Failed renewal charge retry behavior is controlled by:
 The package blocks retries for configured non-retryable response codes and limits failed retry attempts within the rolling window.
 
 `backoff_days` drives the `cashier-nets:retry-past-due` command: retry `n` waits `backoff_days[n - 1]` after the most recent failure, and once the failure count passes the end of the array the subscription is no longer retried automatically. See [subscriptions and renewals](subscriptions-and-renewals.md#retrying-past-due-subscriptions).
+
+An explicitly uncertain attempt is held immediately. `pending_grace_seconds` controls when a bare pending attempt without a charge ID becomes held after a worker disappears. A payment ID alone does not release the hold. All pending attempts block new charges and are excluded from both renewal schedules.
+
+Read-only recovery uses these additional defaults:
+
+```php
+'reconcile' => [
+    'webhook_grace_minutes' => 30,
+    'alert_after_minutes' => 60,
+],
+```
+
+Schedule `cashier-nets:reconcile-charges` every few minutes. Held attempts are looked up by key; identified attempts are retrieved after the webhook grace period. The alert threshold is measured from attempt creation, independently of either grace period, and emits `ChargeReconciliationStalled` once for an unresolved held or identified attempt. See [uncertain charge recovery](subscriptions-and-renewals.md#uncertain-charge-recovery).
 
 ## Custom Models
 

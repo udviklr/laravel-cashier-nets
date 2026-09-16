@@ -149,6 +149,12 @@ class SyncSuccessfulNetsCharge
 
 Duplicate webhook deliveries still dispatch `WebhookHandled`, but semantic events are only dispatched when the package processes the webhook.
 
+For renewal charges reserved by 1.4.0, the package retrieves the event's payment and validates the subscription, exact order reference/attempt key, amount, and currency before applying an outcome. This also supports reservation-failure events with no subscription ID. Payment-created events only enrich identity. A temporary retrieval failure leaves the event unprocessed for redelivery; it does not create a duplicate charge row.
+
+`ChargeSucceeded` and `ChargeFailed` fire only on the attempt's first terminal transition. Later callbacks, even with different event IDs, can enrich missing identifiers and metadata without changing the terminal status, advancing billing again, or emitting another charge outcome. A definitive synchronous decline already reported through `ChargeAttemptFailed` is likewise enrichment-only when its failure webhook arrives.
+
+Read-only reconciliation and payment-based manual resolution use the same finalization and event shape. Inspect `$event->webhookEvent->source` for `webhook`, `reconcile`, or `manual`. Synthetic event IDs are `{source}:{transaction id}:{charge id}`, falling back to the validated payment ID when no charge ID exists. Listeners that throw roll back the finalization so a later run can retry; consumer work must remain idempotent. See [uncertain charge recovery](subscriptions-and-renewals.md#uncertain-charge-recovery) for scheduling and operator commands.
+
 ## Parsed Payloads
 
 Use `Udviklr\CashierNets\Webhooks\WebhookPayload` when your application needs to read Nets identifiers from a raw webhook payload:
@@ -188,6 +194,6 @@ Common webhook issues:
 - `419` responses usually mean the webhook route is still protected by CSRF middleware.
 - `401` responses mean the incoming `Authorization` header does not match `NETS_WEBHOOK_SECRET`.
 - `503` responses mean the environment requires a webhook secret and `NETS_WEBHOOK_SECRET` is not set.
-- `500` responses with the event row left unprocessed mean one of your webhook listeners threw; Nets will redeliver the event.
+- `500` responses with the event row left unprocessed can mean a listener threw or renewal payment retrieval/validation failed; inspect the exception. Nets will redeliver the event.
 - Missing webhook calls often mean `APP_URL` was not public HTTPS when the checkout or charge was created.
 - Subscriptions stuck in `pending` usually mean `payment.checkout.completed` has not been received or matched to the local payment ID, or the checkout-completed webhook did not include a Nets subscription ID and the hosted callback has not finalized the subscription yet.

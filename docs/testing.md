@@ -85,6 +85,15 @@ composer test
 composer analyse
 ```
 
+Laravel Pint is installed as a development dependency. Use the package's local formatter with the paths you are changing, for example:
+
+```shell
+vendor/bin/pint --test src/Subscription.php tests/Feature/ChargeReconciliationTest.php
+vendor/bin/pint src/Subscription.php tests/Feature/ChargeReconciliationTest.php
+```
+
+Explicit paths require neither git nor another project's formatter and avoid scanning private sandbox fixtures. See the [Pint documentation](https://laravel.com/docs/13.x/pint) for configuration options.
+
 Sandbox integration tests are opt-in and require real Nets sandbox credentials:
 
 ```shell
@@ -117,7 +126,9 @@ NETS_TEST_SUBSCRIPTION_ID=active-sandbox-subscription-id \
 composer test:integration:charges
 ```
 
-The charge integration test also sends `my_reference`, retrieves the returned Nets payment, and verifies that Nets persisted `myReference`. If the retrieved payment contains an `invoiceNumber`, the test also checks that it matches the transaction metadata stored by the package.
+Use an active sandbox subscription that has not received a non-retryable decline. Keep decline-probe subscriptions separate from the successful renewal fixture; a previous hard decline can make Nets refuse later charges on the same subscription.
+
+The charge integration test retrieves the returned Nets payment and verifies that its order reference equals the attempt's idempotency key. It also checks the caller-readable reference in the frozen order item and `my_reference` in local transaction metadata. Renewal payment retrieval omits `myReference`, so request passthrough is covered by the charge feature tests. If the retrieved payment contains an `invoiceNumber`, the test also checks that it matches the transaction metadata stored by the package.
 
 Refund coverage is opt-in for the same reason — it issues a real refund against a **settled** sandbox charge. It needs the id of a charge that has settled and still has refundable balance:
 

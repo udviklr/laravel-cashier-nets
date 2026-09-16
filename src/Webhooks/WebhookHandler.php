@@ -4,10 +4,16 @@ namespace Udviklr\CashierNets\Webhooks;
 
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
+use InvalidArgumentException;
 use Udviklr\CashierNets\CashierNets;
+use Udviklr\CashierNets\Charges\ChargeFinalizer;
+use Udviklr\CashierNets\Charges\ChargeOutcome;
+use Udviklr\CashierNets\Charges\ChargeReconciler;
 use Udviklr\CashierNets\Refund;
 use Udviklr\CashierNets\Subscription;
 use Udviklr\CashierNets\Transaction;
+use Udviklr\CashierNets\WebhookEvent;
 
 class WebhookHandler
 {
@@ -16,15 +22,18 @@ class WebhookHandler
      *
      * @param  array<string, mixed>  $payload
      */
-    public function handle(array $payload): WebhookHandlingResult
+    public function handle(array $payload, ?WebhookEvent $event = null, ?array $payment = null): WebhookHandlingResult
     {
         $payload = WebhookPayload::from($payload);
+        if ($payment !== null) {
+            return $this->handleVerifiedPayment($payload, $event, $payment);
+        }
 
         return match ($payload->eventName()) {
             'payment.created' => $this->handlePaymentCreated($payload),
             'payment.checkout.completed' => $this->handleCheckoutCompleted($payload),
-            'payment.charge.created', 'payment.charge.created.v2' => $this->handleChargeCreated($payload),
-            'payment.charge.failed', 'payment.charge.failed.v2', 'payment.reservation.failed' => $this->handlePaymentFailed($payload),
+            'payment.charge.created', 'payment.charge.created.v2' => $this->handleCharge($payload, Transaction::STATUS_SUCCEEDED, $event),
+            'payment.charge.failed', 'payment.charge.failed.v2', 'payment.reservation.failed' => $this->handleCharge($payload, Transaction::STATUS_FAILED, $event),
             'payment.refund.initiated' => $this->handleRefund($payload, Refund::STATUS_PENDING),
             'payment.refund.completed' => $this->handleRefund($payload, Refund::STATUS_COMPLETED),
             'payment.refund.failed' => $this->handleRefund($payload, Refund::STATUS_FAILED),
@@ -86,56 +95,140 @@ class WebhookHandler
     }
 
     /**
-     * Handle a successful charge event.
+     * Fetch renewal identity before the controller takes any processing locks.
+     * Checkout and refund flows retain their existing provider-ID matching.
+     *
+     * @param  array<string, mixed>  $raw
+     * @return array<string, mixed>|null
      */
-    protected function handleChargeCreated(WebhookPayload $payload): WebhookHandlingResult
+    public function prepare(array $raw): ?array
     {
+        $payload = WebhookPayload::from($raw);
+        if (! in_array($payload->eventName(), ['payment.created', 'payment.charge.created', 'payment.charge.created.v2',
+            'payment.charge.failed', 'payment.charge.failed.v2', 'payment.reservation.failed'], true) || $payload->paymentId() === null) {
+            return null;
+        }
         $subscription = $this->findSubscription($payload);
-
-        if (! $subscription) {
-            return new WebhookHandlingResult($payload);
+        $known = CashierNets::transactionModel()->newQuery()->where(function ($query) use ($payload): void {
+            $query->where('nets_payment_id', $payload->paymentId());
+            if ($payload->chargeId() !== null) {
+                $query->orWhere('nets_charge_id', $payload->chargeId());
+            }
+        })->first();
+        if ($known !== null && $known->frozen_order !== null) {
+            return app(ChargeReconciler::class)->retrievePayment($payload->paymentId());
+        }
+        if ($subscription !== null && $subscription->nets_payment_id === $payload->paymentId()) {
+            return null;
+        }
+        if ($known !== null && ! CashierNets::transactionModel()->newQuery()->whereNotNull('frozen_order')
+            ->where('nets_subscription_id', $known->nets_subscription_id)->where('status', Transaction::STATUS_PENDING)->exists()) {
+            return null;
+        }
+        $attempts = CashierNets::transactionModel()->newQuery()->whereNotNull('frozen_order');
+        $subscriptionId = null;
+        if ($subscription !== null) {
+            $subscriptionId = $subscription->nets_subscription_id;
+        } elseif ($known !== null) {
+            $subscriptionId = $known->nets_subscription_id;
+        }
+        if ($subscriptionId !== null) {
+            $attempts->where('nets_subscription_id', $subscriptionId);
         }
 
-        $occurredAt = $this->occurredAt($payload);
-
-        $transaction = $this->recordTransaction($subscription, $payload, Transaction::STATUS_SUCCEEDED, $occurredAt);
-
-        $updates = array_merge($this->subscriptionIdentifierUpdates($payload), [
-            'status' => Subscription::STATUS_ACTIVE,
-            'last_charged_at' => $occurredAt,
-            'failed_at' => null,
-        ]);
-
-        if ($subscription->interval_days !== null) {
-            $updates['next_charge_at'] = $occurredAt->copy()->addDays((int) $subscription->interval_days);
-        }
-
-        $subscription->forceFill($updates)->save();
-
-        return new WebhookHandlingResult($payload, $subscription->refresh(), $transaction);
+        return $attempts->exists() ? app(ChargeReconciler::class)->retrievePayment($payload->paymentId()) : null;
     }
 
-    /**
-     * Handle a failed reservation or charge event.
-     */
-    protected function handlePaymentFailed(WebhookPayload $payload): WebhookHandlingResult
+    /** @param array<string, mixed> $payment */
+    protected function handleVerifiedPayment(WebhookPayload $payload, ?WebhookEvent $event, array $payment): WebhookHandlingResult
     {
-        $subscription = $this->findSubscription($payload);
+        $reconciler = app(ChargeReconciler::class);
+        $subscriptionId = Arr::get($payment, 'subscription.id');
+        if ($payload->subscriptionId() !== null && $payload->subscriptionId() !== $subscriptionId) {
+            throw new InvalidArgumentException('Webhook and retrieved payment subscription IDs differ.');
+        }
+        $row = $reconciler->findAttempt($payment);
+        if ($row !== null) {
+            return app(ChargeFinalizer::class)->withLockedAttempt($row, function (Transaction $row, Subscription $subscription) use ($payment, $payload, $event, $reconciler): WebhookHandlingResult {
+                $reconciler->validateIdentity($row, $payment);
+                if ($payload->eventName() === 'payment.created') {
+                    $row = app(ChargeFinalizer::class)->enrich($row, $payment['paymentId']);
+                } else {
+                    $succeeded = in_array($payload->eventName(), ['payment.charge.created', 'payment.charge.created.v2'], true);
+                    if (($succeeded && $payload->chargeId() === null)
+                        || ($payload->chargeId() !== null && $reconciler->chargeFromPayment($payment, $payload->chargeId(), $row->amount) === null)) {
+                        throw new InvalidArgumentException('The webhook charge is not present in the verified payment.');
+                    }
+                    if (($payload->amount() !== null && $payload->amount() !== $row->amount)
+                        || ($payload->currency() !== null && $payload->currency() !== $row->currency)) {
+                        throw new InvalidArgumentException('The webhook amount or currency differs from the attempt.');
+                    }
+                    $row = $this->finalizeWebhookCharge($row, $payload, $succeeded ? Transaction::STATUS_SUCCEEDED : Transaction::STATUS_FAILED, $event);
+                }
 
-        if (! $subscription) {
-            return new WebhookHandlingResult($payload);
+                return new WebhookHandlingResult($payload, $subscription->refresh(), $row, false);
+            });
         }
 
-        $occurredAt = $this->occurredAt($payload);
+        // Successful retrieval with no reserved attempt is the legacy fallback.
+        // Do not let a changed reference bypass validation of an identified row.
+        $known = CashierNets::transactionModel()->newQuery()->whereNotNull('frozen_order')
+            ->where('nets_payment_id', $payment['paymentId'])->exists();
+        if ($known) {
+            throw new InvalidArgumentException('The identified attempt does not match this payment reference.');
+        }
+        $subscription = is_string($subscriptionId)
+            ? CashierNets::subscriptionModel()->newQuery()->where('nets_subscription_id', $subscriptionId)->first() : null;
+        if ($subscription !== null && $subscription->transactions()->where('status', Transaction::STATUS_PENDING)->whereNull('nets_charge_id')->exists()) {
+            Log::warning('Cashier Nets received a payment without a matching attempt reference while the subscription has unresolved charges.', [
+                'subscription_id' => $subscription->getKey(), 'payment_id' => $payment['paymentId'],
+            ]);
+        }
+        if ($payload->eventName() === 'payment.created') {
+            return new WebhookHandlingResult($payload, $subscription);
+        }
 
-        $transaction = $this->recordTransaction($subscription, $payload, Transaction::STATUS_FAILED, $occurredAt);
+        return $this->handleCharge($payload, in_array($payload->eventName(), ['payment.charge.created', 'payment.charge.created.v2'], true)
+            ? Transaction::STATUS_SUCCEEDED : Transaction::STATUS_FAILED, $event, $subscription);
+    }
 
-        $subscription->forceFill(array_merge($this->subscriptionIdentifierUpdates($payload), [
-            'status' => Subscription::STATUS_PAST_DUE,
-            'failed_at' => $occurredAt,
-        ]))->save();
+    protected function handleCharge(WebhookPayload $payload, string $status, ?WebhookEvent $event, ?Subscription $subscription = null): WebhookHandlingResult
+    {
+        $subscription = $subscription ?? $this->findSubscription($payload);
+        if ($subscription === null || ($payload->chargeId() === null && $payload->paymentId() === null)) {
+            return new WebhookHandlingResult($payload, $subscription);
+        }
 
-        return new WebhookHandlingResult($payload, $subscription->refresh(), $transaction);
+        return $subscription->getConnection()->transaction(function () use ($subscription, $payload, $status, $event): WebhookHandlingResult {
+            $query = $subscription->newQuery();
+            $query->lockForUpdate();
+            $subscription = $query->findOrFail($subscription->getKey());
+            // A checkout charge can arrive before checkout.completed and be
+            // the first event to supply its subscription identifier.
+            if ($subscription->nets_subscription_id === null && $payload->subscriptionId() !== null) {
+                $subscription->forceFill($this->subscriptionIdentifierUpdates($payload))->save();
+            }
+            $row = $this->recordTransaction($subscription, $payload);
+            $row = $this->finalizeWebhookCharge($row, $payload, $status, $event);
+
+            return new WebhookHandlingResult($payload, $subscription->refresh(), $row, false);
+        });
+    }
+
+    protected function finalizeWebhookCharge(Transaction $row, WebhookPayload $payload, string $status, ?WebhookEvent $event): Transaction
+    {
+        $failure = $this->errorFields($payload);
+        $metadata = array_merge($this->webhookEventMetadata($payload), $this->referenceMetadata($payload->raw()));
+        $source = $this->stringValue(Arr::get($payload->raw(), 'data.error.source'));
+        if ($source !== null) {
+            $metadata['failure_source'] = $source;
+        }
+
+        return app(ChargeFinalizer::class)->finalizeCharge($row, new ChargeOutcome($status,
+            $payload->paymentId(), $payload->chargeId(), $payload->occurredAt(), 'webhook',
+            $status === Transaction::STATUS_FAILED ? $failure['failure_code'] : null,
+            $status === Transaction::STATUS_FAILED ? $failure['failure_message'] : null,
+            $payload->raw(), $metadata, $event, $payload));
     }
 
     /**
@@ -428,48 +521,39 @@ class WebhookHandler
     /**
      * Record or update a transaction for a webhook payload.
      */
-    protected function recordTransaction(Subscription $subscription, WebhookPayload $payload, string $status, Carbon $occurredAt): ?Transaction
+    protected function recordTransaction(Subscription $subscription, WebhookPayload $payload): Transaction
     {
-        $transactionModel = CashierNets::$transactionModel;
-        $rawPayload = $payload->raw();
-        $chargeId = $payload->chargeId();
-        $paymentId = $payload->paymentId();
+        $query = CashierNets::transactionModel()->newQuery();
+        $row = $payload->chargeId() !== null
+            ? $query->where('nets_charge_id', $payload->chargeId())->first()
+            : $query->where('nets_payment_id', $payload->paymentId())->first();
+        if ($row !== null) {
+            if (($row->nets_subscription_id !== null && $row->nets_subscription_id !== $subscription->nets_subscription_id)
+                || $row->billable_type !== $subscription->billable_type || (string) $row->billable_id !== (string) $subscription->billable_id) {
+                throw new InvalidArgumentException('Webhook transaction belongs to another subscription.');
+            }
+            if ($row->frozen_order !== null) {
+                throw new InvalidArgumentException('A reserved attempt requires retrieved payment validation.');
+            }
+            $row->nets_subscription_id = $row->nets_subscription_id ?? $subscription->nets_subscription_id;
+            if ($payload->amount() !== null && ($row->status === Transaction::STATUS_PENDING || $row->amount === null)) {
+                $row->amount = $payload->amount();
+            }
+            if ($payload->currency() !== null && ($row->status === Transaction::STATUS_PENDING || $row->currency === null)) {
+                $row->currency = $payload->currency();
+            }
+            $row->save();
 
-        if ($chargeId === null && $paymentId === null) {
-            return null;
+            return $row;
         }
 
-        $lookup = $chargeId !== null
-            ? ['nets_charge_id' => $chargeId]
-            : ['nets_payment_id' => $paymentId, 'status' => $status];
-
-        $transaction = $transactionModel::query()->firstOrNew($lookup);
-
-        $failure = $status === Transaction::STATUS_FAILED
-            ? $this->errorFields($payload)
-            : ['failure_code' => null, 'failure_message' => null];
-
-        $metadata = array_merge(
-            $transaction->metadata ?? [],
-            $this->webhookEventMetadata($payload),
-            $this->referenceMetadata($rawPayload),
-        );
-
-        $transaction->forceFill(array_merge([
-            'billable_type' => $subscription->billable_type,
-            'billable_id' => $subscription->billable_id,
-            'nets_payment_id' => $paymentId,
-            'nets_charge_id' => $chargeId,
-            'nets_subscription_id' => $payload->subscriptionId() ?? $subscription->nets_subscription_id,
+        return CashierNets::transactionModel()->newQuery()->create([
+            'billable_type' => $subscription->billable_type, 'billable_id' => $subscription->billable_id,
+            'nets_payment_id' => $payload->paymentId(), 'nets_charge_id' => $payload->chargeId(),
+            'nets_subscription_id' => $subscription->nets_subscription_id,
             'nets_unscheduled_subscription_id' => $subscription->nets_unscheduled_subscription_id,
-            'status' => $status,
-            'amount' => $payload->amount(),
-            'currency' => $payload->currency(),
-            'billed_at' => $occurredAt,
-            'metadata' => $metadata,
-        ], $failure))->save();
-
-        return $transaction;
+            'status' => Transaction::STATUS_PENDING, 'amount' => $payload->amount(), 'currency' => $payload->currency(),
+        ]);
     }
 
     /**

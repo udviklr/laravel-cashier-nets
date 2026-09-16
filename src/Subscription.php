@@ -4,15 +4,21 @@ namespace Udviklr\CashierNets;
 
 use Carbon\Carbon;
 use Carbon\CarbonInterface;
-use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use RuntimeException;
-use Udviklr\CashierNets\Events\ChargeAttemptFailed;
+use Udviklr\CashierNets\Charges\ChargeFinalizer;
+use Udviklr\CashierNets\Charges\ChargeReconciler;
+use Udviklr\CashierNets\Exceptions\ChargeBlockedException;
+use Udviklr\CashierNets\Exceptions\NetsException;
+use Udviklr\CashierNets\Exceptions\UncertainChargeOutcomeException;
 
 /**
  * @property string $billable_type
@@ -36,11 +42,17 @@ class Subscription extends Model
     public const DEFAULT_TYPE = 'default';
 
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_ACTIVE = 'active';
+
     public const STATUS_TRIALING = 'trialing';
+
     public const STATUS_PAST_DUE = 'past_due';
+
     public const STATUS_PAUSED = 'paused';
+
     public const STATUS_CANCELED = 'canceled';
+
     public const STATUS_EXPIRED = 'expired';
 
     /**
@@ -82,6 +94,8 @@ class Subscription extends Model
 
     /**
      * Get the transactions related to the subscription.
+     *
+     * @return HasMany<Transaction, $this>
      */
     public function transactions(): HasMany
     {
@@ -268,75 +282,127 @@ class Subscription extends Model
      */
     public function charge(array $options = []): Transaction
     {
-        $this->ensureChargeable();
-
-        $amount = $options['amount'] ?? $this->amount;
-        $currency = $options['currency'] ?? $this->currency;
-
-        if (! is_int($amount) || $amount < 0) {
-            throw new InvalidArgumentException('A valid subscription charge amount is required.');
-        }
-
-        if (! is_string($currency) || $currency === '') {
-            throw new InvalidArgumentException('A valid subscription charge currency is required.');
-        }
-
-        $idempotencyKey = $options['idempotency_key'] ?? null;
-
-        if ($idempotencyKey === null) {
-            $dueKey = $this->chargeDueKey();
-
-            $idempotencyKey = $dueKey.'-a'.$this->chargeAttemptNumber($dueKey);
-
-            // Stamp the due-period base on the attempt row so future attempts
-            // for the same period can be counted.
-            $options['metadata'] = array_merge($options['metadata'] ?? [], [
-                'charge_due_key' => $dueKey,
-            ]);
-        }
-
-        // Build (and validate) the payload before recording a pending charge, so a malformed
-        // order item fails fast without marking the subscription past due.
-        $payload = $this->chargePayload($amount, strtoupper($currency), $options);
-
-        $transaction = $this->recordPendingCharge($amount, strtoupper($currency), $idempotencyKey, $options);
-
-        try {
-            $response = CashierNets::api(
-                'POST',
-                'v1/subscriptions/'.$this->nets_subscription_id.'/charges',
-                $payload,
-                ['idempotency_key' => $idempotencyKey],
-            )->json();
-        } catch (\Throwable $throwable) {
-            $transaction->forceFill([
-                'status' => Transaction::STATUS_FAILED,
-                'failure_code' => $throwable instanceof \Udviklr\CashierNets\Exceptions\NetsException ? (string) $throwable->getCode() : null,
-                'failure_message' => $throwable->getMessage(),
-                'billed_at' => now(),
-            ])->save();
-
-            $this->forceFill([
-                'status' => self::STATUS_PAST_DUE,
-                'failed_at' => now(),
-            ])->save();
-
-            event(new ChargeAttemptFailed($this, $transaction, $throwable));
-
-            throw $throwable;
-        }
-
-        if (! is_array($response)) {
+        [$transaction, $payload] = $this->reserveCharge($options);
+        if ($payload === null) {
             return $transaction;
         }
+        $finalizer = app(ChargeFinalizer::class);
+        $httpStatus = null;
+        try {
+            $httpResponse = CashierNets::api('POST', 'v1/subscriptions/'.$transaction->nets_subscription_id.'/charges', $payload,
+                ['idempotency_key' => $transaction->idempotency_key]);
+            $httpStatus = $httpResponse->status();
+            if (! $httpResponse->successful()) {
+                throw NetsException::fromResponse($httpResponse);
+            }
+            $response = $httpResponse->json();
+            if (! is_array($response) || ! is_string($response['paymentId'] ?? null) || trim($response['paymentId']) === ''
+                || ! is_string($response['chargeId'] ?? null) || trim($response['chargeId']) === '') {
+                throw new RuntimeException('The charge response did not contain both paymentId and chargeId.');
+            }
+        } catch (\Throwable $throwable) {
+            $httpStatus = $throwable instanceof NetsException ? $throwable->getCode() : $httpStatus;
+            if ($throwable instanceof NetsException && $httpStatus >= 400 && $httpStatus < 500 && ! in_array($httpStatus, [408, 429], true)) {
+                $body = $throwable->body() ?? [];
+                $code = ChargeReconciler::stringValue($body['code'] ?? Arr::get($body, 'error.code'));
+                $transaction = $finalizer->recordFailure($transaction, $throwable, $code ?? (string) $httpStatus, [
+                    'http_status' => $httpStatus,
+                    'failure_code_source' => $code === null ? 'http' : 'provider',
+                    'failure_source' => ChargeReconciler::stringValue($body['source'] ?? Arr::get($body, 'error.source')),
+                ]);
+                // A message ID is only a candidate. The structured code is
+                // already durable, even if this optional verification fails.
+                $candidate = ChargeReconciler::declinePaymentCandidate($body, $throwable->getMessage());
+                if ($candidate !== null) {
+                    try {
+                        $reconciler = app(ChargeReconciler::class);
+                        $payment = $reconciler->retrievePayment($candidate);
+                        $reconciler->validateIdentity($transaction, $payment);
+                        $transaction = $finalizer->enrich($transaction, $candidate,
+                            ChargeReconciler::stringValue($body['chargeId'] ?? Arr::get($body, 'error.chargeId')), [
+                                'decline_payment_id_source' => isset($body['paymentId']) || isset($body['error']['paymentId']) ? 'structured' : 'validated_message',
+                            ]);
+                    } catch (\Throwable) {
+                        // Preserve the original decline and its retry policy.
+                    }
+                }
+                $this->refresh();
+                throw $throwable;
+            }
+            $transaction = $finalizer->markUncertain($transaction, $throwable, [
+                'uncertain_reason' => $httpStatus === null ? 'transport_exception' : ($httpStatus >= 200 && $httpStatus < 300 ? 'malformed_response' : 'http_'.$httpStatus),
+                'exception_class' => get_class($throwable), 'exception_message' => $throwable->getMessage(), 'http_status' => $httpStatus,
+            ]);
+            $this->refresh();
+            if ($transaction->status !== Transaction::STATUS_PENDING || $transaction->nets_charge_id !== null) {
+                return $transaction;
+            }
+            throw new UncertainChargeOutcomeException($transaction, $throwable);
+        }
 
-        $transaction->forceFill([
-            'nets_payment_id' => is_scalar($response['paymentId'] ?? null) ? (string) $response['paymentId'] : $transaction->nets_payment_id,
-            'nets_charge_id' => is_scalar($response['chargeId'] ?? null) ? (string) $response['chargeId'] : $transaction->nets_charge_id,
-            'metadata' => array_merge($transaction->metadata ?? [], $this->responseReferenceMetadata($response)),
-        ])->save();
+        return $finalizer->enrich($transaction, $response['paymentId'], $response['chargeId'], $this->responseReferenceMetadata($response));
+    }
 
-        return $transaction;
+    /**
+     * @param  array<string, mixed>  $options
+     * @return array{Transaction, array<string, mixed>|null}
+     */
+    protected function reserveCharge(array $options): array
+    {
+        return $this->getConnection()->transaction(function () use ($options): array {
+            $query = $this->newQuery();
+            $query->lockForUpdate();
+            $subscription = $query->findOrFail($this->getKey());
+            $idempotencyKey = $options['idempotency_key'] ?? null;
+            if ($idempotencyKey === null) {
+                $dueKey = $subscription->chargeDueKey();
+                $idempotencyKey = $dueKey.'-a'.$subscription->chargeAttemptNumber($dueKey);
+                $options['metadata'] = array_merge($options['metadata'] ?? [], ['charge_due_key' => $dueKey]);
+            }
+            if (! is_string($idempotencyKey) || $idempotencyKey === '' || strlen($idempotencyKey) > 63
+                || preg_match('//u', $idempotencyKey) !== 1 || preg_match('/(^\s|\s$|\p{C})/u', $idempotencyKey)
+                || trim($idempotencyKey) !== $idempotencyKey || preg_match('/[\x00-\x1f\x7f<>\\\\]/', $idempotencyKey)) {
+                throw new InvalidArgumentException('An idempotency key must be an order reference of 1-63 bytes without surrounding whitespace, control characters, angle brackets or backslashes.');
+            }
+            $existing = CashierNets::transactionModel()->newQuery()->where('idempotency_key', $idempotencyKey)->first();
+            if ($existing !== null && ($existing->idempotency_key !== $idempotencyKey || $existing->nets_subscription_id !== $subscription->nets_subscription_id
+                || $existing->billable_type !== $subscription->billable_type || (string) $existing->billable_id !== (string) $subscription->billable_id)) {
+                throw new InvalidArgumentException('The idempotency key belongs to another subscription.');
+            }
+            $pending = $subscription->transactions()->where('status', Transaction::STATUS_PENDING)->first();
+            if ($pending !== null) {
+                if ($pending->idempotency_key === $idempotencyKey) {
+                    return [$pending, null];
+                }
+                throw new ChargeBlockedException($pending, $pending->held() ? 'held' : 'in_flight');
+            }
+            if ($existing !== null) {
+                if (! isset($options['idempotency_key']) && $existing->status === Transaction::STATUS_CANCELED) {
+                    Log::warning('Cashier Nets generated a charge key for an already canceled attempt.', [
+                        'subscription_id' => $subscription->getKey(),
+                        'transaction_id' => $existing->getKey(),
+                        'idempotency_key' => $idempotencyKey,
+                        'superseded_by' => $existing->metadata['superseded_by'] ?? null,
+                    ]);
+                }
+
+                return [$existing, null];
+            }
+            $subscription->ensureChargeable();
+            $amount = $options['amount'] ?? $subscription->amount;
+            $currency = $options['currency'] ?? $subscription->currency;
+            if (! is_int($amount) || $amount < 0) {
+                throw new InvalidArgumentException('A valid subscription charge amount is required.');
+            }
+            if (! is_string($currency) || $currency === '') {
+                throw new InvalidArgumentException('A valid subscription charge currency is required.');
+            }
+            $payload = $subscription->chargePayload($amount, strtoupper($currency), $options);
+            $payload['order']['reference'] = $idempotencyKey;
+            $transaction = $subscription->recordPendingCharge($amount, strtoupper($currency), $idempotencyKey, $options, $payload['order']);
+
+            return [$transaction, $payload];
+        });
     }
 
     /**
@@ -449,13 +515,15 @@ class Subscription extends Model
     /**
      * Record a pending charge attempt.
      *
-     * @param  array{metadata?: array<string, mixed>}  $options
+     * @param  array<string, mixed>  $options
+     * @param  array<string, mixed>  $order
      */
-    protected function recordPendingCharge(int $amount, string $currency, string $idempotencyKey, array $options): Transaction
+    protected function recordPendingCharge(int $amount, string $currency, string $idempotencyKey, array $options, array $order): Transaction
     {
         $transactionModel = CashierNets::$transactionModel;
         $metadata = array_merge($options['metadata'] ?? [], [
             'source' => 'subscription_charge',
+            'reference' => $options['reference'] ?? ($this->metadata['reference'] ?? 'subscription-renewal'),
         ]);
 
         $myReference = $this->myReferenceOption($options);
@@ -464,9 +532,9 @@ class Subscription extends Model
             $metadata['my_reference'] = $myReference;
         }
 
-        return $transactionModel::query()->updateOrCreate([
+        return $transactionModel::query()->create([
             'idempotency_key' => $idempotencyKey,
-        ], [
+            'frozen_order' => $order,
             'billable_type' => $this->billable_type,
             'billable_id' => $this->billable_id,
             'nets_subscription_id' => $this->nets_subscription_id,
@@ -565,7 +633,7 @@ class Subscription extends Model
     /**
      * Query failed charge attempts in the configured retry window.
      *
-     * @return \Illuminate\Database\Eloquent\Builder<\Udviklr\CashierNets\Transaction>
+     * @return Builder<Transaction>
      */
     protected function chargeFailuresQuery(): Builder
     {
@@ -627,7 +695,7 @@ class Subscription extends Model
     /**
      * Scope the query to valid subscriptions.
      *
-     * @param  \Illuminate\Database\Eloquent\Builder<static>  $query
+     * @param  Builder<static>  $query
      */
     public function scopeValid(Builder $query): void
     {
@@ -645,11 +713,12 @@ class Subscription extends Model
     /**
      * Scope the query to subscriptions due for a charge.
      *
-     * @param  \Illuminate\Database\Eloquent\Builder<static>  $query
+     * @param  Builder<static>  $query
      */
     public function scopeDueForCharge(Builder $query): void
     {
         $query->where('status', self::STATUS_ACTIVE)
+            ->whereDoesntHave('transactions', fn (Builder $query) => $query->where('status', Transaction::STATUS_PENDING))
             ->whereNotNull('next_charge_at')
             ->where('next_charge_at', '<=', Carbon::now())
             ->where(function (Builder $query): void {
@@ -661,7 +730,7 @@ class Subscription extends Model
     /**
      * Get subscriptions that are due for a charge.
      *
-     * @return \Illuminate\Database\Eloquent\Collection<int, static>
+     * @return Collection<int, static>
      */
     public function dueForChargeCollection(int $limit): EloquentCollection
     {
@@ -685,7 +754,8 @@ class Subscription extends Model
             || $this->ended()
             || ! $this->nets_subscription_id
             || $this->next_charge_at === null
-            || ! $this->chargeRetryable()) {
+            || ! $this->chargeRetryable()
+            || $this->transactions()->where('status', Transaction::STATUS_PENDING)->exists()) {
             return false;
         }
 
@@ -714,7 +784,7 @@ class Subscription extends Model
     /**
      * Get past-due subscriptions that are ready for an automatic retry charge.
      *
-     * @return \Illuminate\Database\Eloquent\Collection<int, static>
+     * @return Collection<int, static>
      */
     public function dueForRetryCollection(int $limit): EloquentCollection
     {
@@ -722,6 +792,7 @@ class Subscription extends Model
 
         $query = $this->newQuery()
             ->where('status', self::STATUS_PAST_DUE)
+            ->whereDoesntHave('transactions', fn (Builder $query) => $query->where('status', Transaction::STATUS_PENDING))
             ->where(function (Builder $query): void {
                 $query->whereNull('ends_at')
                     ->orWhere('ends_at', '>', Carbon::now());

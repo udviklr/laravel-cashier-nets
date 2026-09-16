@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\URL;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
 use RuntimeException;
 use Tests\TestCase;
-use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Events\ChargeAttemptFailed;
 use Udviklr\CashierNets\Exceptions\NetsException;
 use Udviklr\CashierNets\Subscription;
@@ -330,7 +329,7 @@ class SubscriptionChargeTest extends TestCase
     {
         Http::fake([
             'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::sequence()
-                ->push(['message' => 'Temporarily unavailable.'], 500)
+                ->push(['message' => 'Charge was rejected.'], 402)
                 ->push(['paymentId' => 'pay_retry', 'chargeId' => 'charge_retry']),
         ]);
 
@@ -382,8 +381,8 @@ class SubscriptionChargeTest extends TestCase
     {
         Http::fake([
             'https://test.api.dibspayment.eu/v1/subscriptions/sub_123/charges' => Http::sequence()
-                ->push(['message' => 'Temporarily unavailable.'], 500)
-                ->push(['message' => 'Temporarily unavailable.'], 500),
+                ->push(['message' => 'Charge was rejected.'], 402)
+                ->push(['message' => 'Charge was rejected.'], 402),
         ]);
 
         $subscription = $this->createSubscription([
@@ -439,7 +438,7 @@ class SubscriptionChargeTest extends TestCase
             return $request->header('Idempotency-Key') === [$expectedKey];
         });
 
-        Http::assertSentCount(2);
+        Http::assertSentCount(1);
     }
 
     public function test_a_failed_charge_attempt_fires_an_observability_event(): void
@@ -481,8 +480,8 @@ class SubscriptionChargeTest extends TestCase
 
         Http::fake([
             'https://test.api.dibspayment.eu/v1/subscriptions/sub_due/charges' => Http::response([
-                'message' => 'Temporarily unavailable.',
-            ], 500),
+                'message' => 'Charge was rejected.',
+            ], 402),
         ]);
 
         $this->createSubscription([

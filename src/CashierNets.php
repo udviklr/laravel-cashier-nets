@@ -6,10 +6,11 @@ use Illuminate\Http\Client\Response;
 use Illuminate\Support\Arr;
 use InvalidArgumentException;
 use Udviklr\CashierNets\Client\NetsClient;
+use Udviklr\CashierNets\Exceptions\NetsException;
 
 class CashierNets
 {
-    public const VERSION = '1.3.0';
+    public const VERSION = '1.4.0';
 
     /**
      * Indicates if Cashier Nets routes will be registered.
@@ -24,35 +25,35 @@ class CashierNets
     /**
      * The customer model class name.
      *
-     * @var class-string<\Udviklr\CashierNets\Customer>
+     * @var class-string<Customer>
      */
     public static string $customerModel = Customer::class;
 
     /**
      * The subscription model class name.
      *
-     * @var class-string<\Udviklr\CashierNets\Subscription>
+     * @var class-string<Subscription>
      */
     public static string $subscriptionModel = Subscription::class;
 
     /**
      * The transaction model class name.
      *
-     * @var class-string<\Udviklr\CashierNets\Transaction>
+     * @var class-string<Transaction>
      */
     public static string $transactionModel = Transaction::class;
 
     /**
      * The refund model class name.
      *
-     * @var class-string<\Udviklr\CashierNets\Refund>
+     * @var class-string<Refund>
      */
     public static string $refundModel = Refund::class;
 
     /**
      * The webhook event model class name.
      *
-     * @var class-string<\Udviklr\CashierNets\WebhookEvent>
+     * @var class-string<WebhookEvent>
      */
     public static string $webhookEventModel = WebhookEvent::class;
 
@@ -112,7 +113,7 @@ class CashierNets
      * "cannot terminate" response surfaces as a NetsException so abandon
      * flows can treat the call as best-effort and ignore it.
      *
-     * @throws \Udviklr\CashierNets\Exceptions\NetsException
+     * @throws NetsException
      */
     public static function terminatePayment(string $paymentId): void
     {

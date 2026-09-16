@@ -7,11 +7,9 @@ use Udviklr\CashierNets\Subscription;
 use Udviklr\CashierNets\Transaction;
 
 /**
- * Fired when a local charge attempt errors before Nets reports an outcome.
- *
- * Distinct from the webhook-driven ChargeFailed event: this one means the
- * attempt itself errored locally (timeout, Nets 5xx, rejected request),
- * while ChargeFailed means Nets reported a failed charge.
+ * Fired for a definitive synchronous decline or an operator-confirmed failure.
+ * Ambiguous transport outcomes emit ChargeOutcomeUncertain instead. A later
+ * webhook enriches this failed attempt without emitting ChargeFailed again.
  */
 class ChargeAttemptFailed
 {
@@ -19,6 +17,5 @@ class ChargeAttemptFailed
         public Subscription $subscription,
         public Transaction $transaction,
         public Throwable $exception,
-    ) {
-    }
+    ) {}
 }
