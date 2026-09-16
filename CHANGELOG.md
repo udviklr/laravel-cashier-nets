@@ -1,5 +1,26 @@
 # Release Notes
 
+## [1.4.0] - 2026-09-16
+
+### Added
+
+- Frozen subscription charge attempts with `uncertain_at`, `frozen_order`, and unique nullable indexes on `idempotency_key` and `nets_charge_id`.
+- `cashier-nets:reconcile-charges`, `cashier-nets:uncertain-charges`, and `cashier-nets:resolve-charge` for read-only recovery and operator resolution. Stalled attempts emit `ChargeReconciliationStalled` once.
+- Strict renewal payment correlation using the retrieved payment ID, subscription ID, exact order reference, amount, and currency. Failure callbacks can resolve an attempt even when status-by-key returns 404.
+- Local Laravel Pint development dependency for reproducible formatting.
+
+### Behavior changes
+
+- Timeouts, transport errors, 5xx, 408, 429, and malformed accepted responses keep the attempt pending, emit `ChargeOutcomeUncertain`, and throw `UncertainChargeOutcomeException`. They no longer emit `ChargeAttemptFailed`, mark subscriptions past due, or consume the failure budget.
+- `charge()` sends at most one POST per reserved attempt. Reusing its key returns the original row. Any pending attempt blocks a different key with `ChargeBlockedException`; due and retry commands skip these subscriptions.
+- Renewal `order.reference` is the exact attempt key. Caller-readable references remain in default order items and transaction metadata; custom item references and merchant-reference passthrough remain supported. Explicit keys must fit the validated 63-byte order-reference format. Checkout references are unchanged.
+- Synchronous declines immediately store structured provider codes and sources. A payment ID found in decline prose is only attached after retrieving and validating its identity; failure of that best-effort lookup preserves the original decline.
+- Webhooks, reconciliation, and payment-based manual resolution share terminal finalization. Late evidence only enriches terminal rows, without a second billing-period advance, failure count, or outcome event. Reconciliation and manual finalization emit the existing `ChargeSucceeded`/`ChargeFailed` event shape with deterministic synthetic `WebhookEvent` IDs and `source` values (`reconcile` or `manual`); received webhooks use `webhook`.
+- Operator failure confirmation refuses pending attempts with a charge ID after locking and reloading the row. A reason or payment ID cannot bypass the guard; resolution requires verified provider evidence.
+- Reusing an automatically generated key belonging to a canceled attempt logs a warning with the attempt and superseding transaction IDs.
+
+See [upgrading](docs/upgrading.md#upgrading-to-140) before running the migration or restarting renewal schedules.
+
 ## [1.3.0] - 2026-06-14
 
 Added:

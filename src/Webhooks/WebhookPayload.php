@@ -5,6 +5,8 @@ namespace Udviklr\CashierNets\Webhooks;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Arr;
+use Udviklr\CashierNets\Charges\ChargeOutcome;
+use Udviklr\CashierNets\Transaction;
 
 final class WebhookPayload
 {
@@ -15,8 +17,7 @@ final class WebhookPayload
      */
     private function __construct(
         private array $payload,
-    ) {
-    }
+    ) {}
 
     /**
      * Create a payload wrapper from a raw Nets webhook payload.
@@ -26,6 +27,22 @@ final class WebhookPayload
     public static function from(array $payload): self
     {
         return new self($payload);
+    }
+
+    public static function fromChargeOutcome(Transaction $row, ChargeOutcome $outcome, string $eventId, CarbonInterface $occurredAt): self
+    {
+        return self::from([
+            'id' => $eventId,
+            'event' => $outcome->status === Transaction::STATUS_SUCCEEDED ? 'payment.charge.created.v2' : 'payment.charge.failed.v2',
+            'timestamp' => $occurredAt->toIso8601String(),
+            'data' => [
+                'paymentId' => $outcome->paymentId, 'chargeId' => $outcome->chargeId,
+                'subscriptionId' => $row->nets_subscription_id,
+                'amount' => ['amount' => $row->amount, 'currency' => $row->currency],
+                'error' => ['code' => $outcome->failureCode, 'message' => $outcome->failureMessage],
+            ],
+            'payment' => $outcome->providerData,
+        ]);
     }
 
     /**

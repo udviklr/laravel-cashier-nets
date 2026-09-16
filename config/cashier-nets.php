@@ -89,6 +89,7 @@ return [
     */
 
     'retry_policy' => [
+        'pending_grace_seconds' => 120,
         // Automatic past-due retry backoff: retry n waits backoff_days[n - 1]
         // after the most recent failure. Once the failure count passes the end
         // of the array, cashier-nets:retry-past-due stops selecting the
@@ -106,5 +107,10 @@ return [
             '54',
             '57',
         ],
+    ],
+
+    'reconcile' => [
+        'webhook_grace_minutes' => 30,
+        'alert_after_minutes' => 60,
     ],
 ];

@@ -2,10 +2,12 @@
 
 namespace Udviklr\CashierNets;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use RuntimeException;
@@ -22,16 +24,24 @@ use Udviklr\CashierNets\Exceptions\RefundException;
  * @property string|null $currency
  * @property string $status
  * @property string|null $failure_code
- * @property \Illuminate\Support\Carbon|null $billed_at
- * @property \Illuminate\Support\Carbon|null $created_at
- * @property \Illuminate\Support\Carbon|null $updated_at
+ * @property string|null $failure_message
+ * @property array<string, mixed>|null $metadata
+ * @property array<string, mixed>|null $frozen_order
+ * @property Carbon|null $uncertain_at
+ * @property Carbon|null $billed_at
+ * @property Carbon|null $created_at
+ * @property Carbon|null $updated_at
  */
 class Transaction extends Model
 {
     public const STATUS_PENDING = 'pending';
+
     public const STATUS_SUCCEEDED = 'succeeded';
+
     public const STATUS_FAILED = 'failed';
+
     public const STATUS_REFUNDED = 'refunded';
+
     public const STATUS_CANCELED = 'canceled';
 
     /**
@@ -55,7 +65,39 @@ class Transaction extends Model
         'amount' => 'integer',
         'metadata' => 'array',
         'billed_at' => 'datetime',
+        'uncertain_at' => 'datetime',
+        'frozen_order' => 'array',
     ];
+
+    public function held(): bool
+    {
+        return $this->status === self::STATUS_PENDING
+            && $this->nets_charge_id === null
+            && ($this->uncertain_at !== null || ($this->created_at !== null
+                && $this->created_at->lt(now()->subSeconds(max(0, (int) config('cashier-nets.retry_policy.pending_grace_seconds', 120))))));
+    }
+
+    public function awaitingWebhookIsStale(): bool
+    {
+        return $this->status === self::STATUS_PENDING && $this->nets_charge_id !== null
+            && $this->created_at !== null
+            && $this->created_at->lt(now()->subMinutes(max(0, (int) config('cashier-nets.reconcile.webhook_grace_minutes', 30))));
+    }
+
+    /** @param Builder<static> $query */
+    public function scopeNeedsChargeReconciliation(Builder $query): void
+    {
+        $query->where('status', self::STATUS_PENDING)->whereNotNull('nets_subscription_id')
+            ->where(function (Builder $query): void {
+                $query->where(function (Builder $query): void {
+                    $query->whereNull('nets_charge_id')->where(function (Builder $query): void {
+                        $query->whereNotNull('uncertain_at')->orWhere('created_at', '<', now()->subSeconds(max(0, (int) config('cashier-nets.retry_policy.pending_grace_seconds', 120))));
+                    });
+                })->orWhere(function (Builder $query): void {
+                    $query->whereNotNull('nets_charge_id')->where('created_at', '<', now()->subMinutes(max(0, (int) config('cashier-nets.reconcile.webhook_grace_minutes', 30))));
+                });
+            });
+    }
 
     /**
      * Get the billable model related to the transaction.
@@ -131,7 +173,7 @@ class Transaction extends Model
      *
      * @param  array<int, array<string, mixed>>  $orderItems
      *
-     * @throws \Udviklr\CashierNets\Exceptions\RefundException
+     * @throws RefundException
      */
     public function refund(?int $amount = null, array $orderItems = [], ?string $idempotencyKey = null): Refund
     {

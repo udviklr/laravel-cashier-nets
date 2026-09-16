@@ -11,6 +11,6 @@ final class WebhookHandlingResult
         public WebhookPayload $payload,
         public ?Subscription $subscription = null,
         public ?Transaction $transaction = null,
-    ) {
-    }
+        public bool $dispatchTypedEvent = true,
+    ) {}
 }

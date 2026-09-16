@@ -27,12 +27,12 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->configureNetsSandbox();
 
         $user = $this->createBillableUser();
-        $reference = $this->testReference('hosted');
-        $myReference = $this->testMerchantReference('hosted');
+        $reference = $this->sandboxReference('hosted');
+        $myReference = $this->sandboxMerchantReference('hosted');
 
         $checkout = $user->newNetsSubscription('integration-hosted')
-            ->amount($this->testAmount())
-            ->currency($this->testCurrency())
+            ->amount($this->sandboxAmount())
+            ->currency($this->sandboxCurrency())
             ->intervalDays(30)
             ->description('Cashier Nets sandbox hosted subscription')
             ->reference($reference)
@@ -40,7 +40,7 @@ class NetsSandboxCheckoutTest extends TestCase
             ->returnUrl($this->urlFromEnv('NETS_TEST_RETURN_URL', 'https://example.com/billing/return'))
             ->cancelUrl($this->urlFromEnv('NETS_TEST_CANCEL_URL', 'https://example.com/billing/cancel'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
-            ->endDate($this->testEndDate())
+            ->endDate($this->sandboxEndDate())
             ->checkout();
 
         $this->assertNotSame('', $checkout->paymentId());
@@ -53,8 +53,8 @@ class NetsSandboxCheckoutTest extends TestCase
             'type' => 'integration-hosted',
             'nets_payment_id' => $checkout->paymentId(),
             'status' => Subscription::STATUS_PENDING,
-            'amount' => $this->testAmount(),
-            'currency' => $this->testCurrency(),
+            'amount' => $this->sandboxAmount(),
+            'currency' => $this->sandboxCurrency(),
         ]);
         $this->assertSame($myReference, $checkout->subscription()?->metadata['my_reference']);
 
@@ -71,19 +71,19 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->configureNetsSandbox(requireCheckoutKey: true);
 
         $user = $this->createBillableUser();
-        $reference = $this->testReference('embedded');
-        $myReference = $this->testMerchantReference('embedded');
+        $reference = $this->sandboxReference('embedded');
+        $myReference = $this->sandboxMerchantReference('embedded');
 
         $checkout = $user->newNetsSubscription('integration-embedded')
-            ->amount($this->testAmount())
-            ->currency($this->testCurrency())
+            ->amount($this->sandboxAmount())
+            ->currency($this->sandboxCurrency())
             ->intervalDays(30)
             ->description('Cashier Nets sandbox embedded subscription')
             ->reference($reference)
             ->merchantReference($myReference)
             ->checkoutUrl($this->urlFromEnv('NETS_TEST_CHECKOUT_URL', 'https://example.com/billing/checkout'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
-            ->endDate($this->testEndDate())
+            ->endDate($this->sandboxEndDate())
             ->embeddedCheckout();
 
         $this->assertNotSame('', $checkout->paymentId());
@@ -96,8 +96,8 @@ class NetsSandboxCheckoutTest extends TestCase
             'type' => 'integration-embedded',
             'nets_payment_id' => $checkout->paymentId(),
             'status' => Subscription::STATUS_PENDING,
-            'amount' => $this->testAmount(),
-            'currency' => $this->testCurrency(),
+            'amount' => $this->sandboxAmount(),
+            'currency' => $this->sandboxCurrency(),
         ]);
 
         $payment = CashierNets::api('GET', 'v1/payments/'.$checkout->paymentId())->json();
@@ -113,17 +113,17 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->configureNetsSandbox(enableWebhooks: true);
 
         $user = $this->createBillableUser();
-        $reference = $this->testReference('webhooks');
+        $reference = $this->sandboxReference('webhooks');
 
         $checkout = $user->newNetsSubscription('integration-webhooks')
-            ->amount($this->testAmount())
-            ->currency($this->testCurrency())
+            ->amount($this->sandboxAmount())
+            ->currency($this->sandboxCurrency())
             ->intervalDays(30)
             ->description('Cashier Nets sandbox webhook subscription')
             ->reference($reference)
             ->returnUrl($this->urlFromEnv('NETS_TEST_RETURN_URL', 'https://example.com/billing/return'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
-            ->endDate($this->testEndDate())
+            ->endDate($this->sandboxEndDate())
             ->checkout();
 
         $payment = CashierNets::api('GET', 'v1/payments/'.$checkout->paymentId())->json();
@@ -141,17 +141,17 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->configureNetsSandbox();
 
         $user = $this->createBillableUser();
-        $reference = $this->testReference('initial-charge');
+        $reference = $this->sandboxReference('initial-charge');
 
         $checkout = $user->newNetsSubscription('integration-initial-charge')
-            ->amount($this->testAmount())
-            ->currency($this->testCurrency())
+            ->amount($this->sandboxAmount())
+            ->currency($this->sandboxCurrency())
             ->intervalDays(30)
             ->description('Cashier Nets sandbox initial charge subscription')
             ->reference($reference)
             ->returnUrl($this->urlFromEnv('NETS_TEST_RETURN_URL', 'https://example.com/billing/return'))
             ->termsUrl($this->urlFromEnv('NETS_TEST_TERMS_URL', 'https://example.com/terms'))
-            ->endDate($this->testEndDate())
+            ->endDate($this->sandboxEndDate())
             ->chargeImmediately()
             ->checkout();
 
@@ -184,15 +184,15 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->configureNetsSandbox();
 
         $user = $this->createBillableUser();
-        $idempotencyKey = 'cashier-nets-invalid-charge-'.Str::uuid();
+        $idempotencyKey = 'cashier-invalid-charge-'.Str::uuid();
         $subscriptionId = (string) Str::uuid();
 
         $subscription = $user->netsSubscriptions()->create([
             'type' => 'integration-invalid-charge',
             'nets_subscription_id' => $subscriptionId,
             'status' => Subscription::STATUS_ACTIVE,
-            'amount' => $this->testAmount(),
-            'currency' => $this->testCurrency(),
+            'amount' => $this->sandboxAmount(),
+            'currency' => $this->sandboxCurrency(),
             'interval_days' => 30,
             'next_charge_at' => Carbon::now()->subMinute(),
         ]);
@@ -200,7 +200,7 @@ class NetsSandboxCheckoutTest extends TestCase
         try {
             $subscription->charge([
                 'description' => 'Cashier Nets sandbox invalid subscription charge',
-                'reference' => $this->testReference('invalid-charge'),
+                'reference' => $this->sandboxReference('invalid-charge'),
                 'idempotency_key' => $idempotencyKey,
             ]);
 
@@ -216,8 +216,8 @@ class NetsSandboxCheckoutTest extends TestCase
             'idempotency_key' => $idempotencyKey,
             'nets_subscription_id' => $subscriptionId,
             'status' => Transaction::STATUS_FAILED,
-            'amount' => $this->testAmount(),
-            'currency' => $this->testCurrency(),
+            'amount' => $this->sandboxAmount(),
+            'currency' => $this->sandboxCurrency(),
         ]);
     }
 
@@ -234,15 +234,15 @@ class NetsSandboxCheckoutTest extends TestCase
 
         $user = $this->createBillableUser();
         $idempotencyKey = 'cashier-nets-charge-'.Str::uuid();
-        $reference = $this->testReference('charge');
-        $myReference = $this->testMerchantReference('charge');
+        $reference = $this->sandboxReference('charge');
+        $myReference = $this->sandboxMerchantReference('charge');
 
         $subscription = $user->netsSubscriptions()->create([
             'type' => 'integration-charge',
             'nets_subscription_id' => $netsSubscriptionId,
             'status' => Subscription::STATUS_ACTIVE,
-            'amount' => $this->testAmount(),
-            'currency' => $this->testCurrency(),
+            'amount' => $this->sandboxAmount(),
+            'currency' => $this->sandboxCurrency(),
             'interval_days' => 30,
             'next_charge_at' => Carbon::now()->subMinute(),
         ]);
@@ -259,18 +259,20 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->assertSame(Transaction::STATUS_PENDING, $transaction->status);
         $this->assertSame($idempotencyKey, $transaction->idempotency_key);
         $this->assertSame($netsSubscriptionId, $transaction->nets_subscription_id);
-        $this->assertSame($this->testAmount(), $transaction->amount);
-        $this->assertSame($this->testCurrency(), $transaction->currency);
+        $this->assertSame($this->sandboxAmount(), $transaction->amount);
+        $this->assertSame($this->sandboxCurrency(), $transaction->currency);
         $this->assertNotSame('', (string) $transaction->nets_payment_id);
         $this->assertSame($myReference, $transaction->metadata['my_reference']);
 
         $payment = CashierNets::api('GET', 'v1/payments/'.$transaction->nets_payment_id)->json();
 
         $this->assertSame($transaction->nets_payment_id, data_get($payment, 'payment.paymentId', data_get($payment, 'paymentId')));
-        $this->assertSame($this->testAmount(), (int) data_get($payment, 'payment.orderDetails.amount'));
-        $this->assertSame($this->testCurrency(), data_get($payment, 'payment.orderDetails.currency'));
-        $this->assertSame($reference, data_get($payment, 'payment.orderDetails.reference'));
-        $this->assertRetrievedPaymentMyReference($payment, $myReference);
+        $this->assertSame($this->sandboxAmount(), (int) data_get($payment, 'payment.orderDetails.amount'));
+        $this->assertSame($this->sandboxCurrency(), data_get($payment, 'payment.orderDetails.currency'));
+        $this->assertSame($idempotencyKey, data_get($payment, 'payment.orderDetails.reference'));
+        $this->assertSame($reference, $transaction->frozen_order['items'][0]['reference']);
+        // Renewal GETs omit myReference; request passthrough is covered by the
+        // charge feature tests and the local metadata assertion above.
 
         $invoiceNumber = $this->paymentInvoiceNumber($payment);
 
@@ -301,8 +303,8 @@ class NetsSandboxCheckoutTest extends TestCase
             'nets_payment_id' => $paymentId ?? $this->env('NETS_TEST_REFUND_PAYMENT_ID'),
             'nets_charge_id' => $chargeId,
             'status' => Transaction::STATUS_SUCCEEDED,
-            'amount' => $this->testAmount(),
-            'currency' => $this->testCurrency(),
+            'amount' => $this->sandboxAmount(),
+            'currency' => $this->sandboxCurrency(),
         ]);
 
         $amount = $this->refundTestAmount();
@@ -316,7 +318,7 @@ class NetsSandboxCheckoutTest extends TestCase
         $this->assertSame(Refund::STATUS_PENDING, $refund->status);
         $this->assertNotSame('', (string) $refund->nets_refund_id, 'Nets did not return a refundId for the refund.');
         $this->assertSame($amount, $refund->amount);
-        $this->assertSame($this->testCurrency(), $refund->currency);
+        $this->assertSame($this->sandboxCurrency(), $refund->currency);
         $this->assertSame($chargeId, $refund->nets_charge_id);
         $this->assertSame($idempotencyKey, $refund->idempotency_key);
         $this->assertSame($transaction->id, (int) $refund->nets_transaction_id);
@@ -435,8 +437,8 @@ class NetsSandboxCheckoutTest extends TestCase
     protected function assertRetrievedPaymentMatchesCheckout(array $payment, string $paymentId, string $reference): void
     {
         $this->assertSame($paymentId, data_get($payment, 'payment.paymentId', data_get($payment, 'paymentId')));
-        $this->assertSame($this->testAmount(), (int) data_get($payment, 'payment.orderDetails.amount'));
-        $this->assertSame($this->testCurrency(), data_get($payment, 'payment.orderDetails.currency'));
+        $this->assertSame($this->sandboxAmount(), (int) data_get($payment, 'payment.orderDetails.amount'));
+        $this->assertSame($this->sandboxCurrency(), data_get($payment, 'payment.orderDetails.currency'));
         $this->assertSame($reference, data_get($payment, 'payment.orderDetails.reference'));
         $this->assertIsString(data_get($payment, 'payment.created'));
     }
@@ -518,27 +520,27 @@ class NetsSandboxCheckoutTest extends TestCase
         return null;
     }
 
-    protected function testAmount(): int
+    protected function sandboxAmount(): int
     {
         return (int) (getenv('NETS_TEST_AMOUNT') ?: 1000);
     }
 
-    protected function testCurrency(): string
+    protected function sandboxCurrency(): string
     {
         return strtoupper((string) (getenv('NETS_TEST_CURRENCY') ?: 'DKK'));
     }
 
-    protected function testEndDate(): string
+    protected function sandboxEndDate(): string
     {
         return $this->env('NETS_TEST_END_DATE') ?? now()->addYear()->toRfc3339String();
     }
 
-    protected function testReference(string $suffix): string
+    protected function sandboxReference(string $suffix): string
     {
         return 'cashier-nets-'.$suffix.'-'.Str::uuid();
     }
 
-    protected function testMerchantReference(string $suffix): string
+    protected function sandboxMerchantReference(string $suffix): string
     {
         return 'cn-'.$suffix.'-'.Str::lower(Str::random(12));
     }

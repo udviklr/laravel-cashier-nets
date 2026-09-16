@@ -6,7 +6,10 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Udviklr\CashierNets\Client\NetsClient;
 use Udviklr\CashierNets\Console\ChargeDueSubscriptionsCommand;
+use Udviklr\CashierNets\Console\ReconcileChargesCommand;
+use Udviklr\CashierNets\Console\ResolveChargeCommand;
 use Udviklr\CashierNets\Console\RetryPastDueSubscriptionsCommand;
+use Udviklr\CashierNets\Console\UncertainChargesCommand;
 
 class CashierNetsServiceProvider extends ServiceProvider
 {
@@ -31,6 +34,9 @@ class CashierNetsServiceProvider extends ServiceProvider
             $this->commands([
                 ChargeDueSubscriptionsCommand::class,
                 RetryPastDueSubscriptionsCommand::class,
+                ReconcileChargesCommand::class,
+                ResolveChargeCommand::class,
+                UncertainChargesCommand::class,
             ]);
 
             $this->publishes([

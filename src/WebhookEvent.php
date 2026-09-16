@@ -3,9 +3,11 @@
 namespace Udviklr\CashierNets;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Carbon;
 
 /**
- * @property \Illuminate\Support\Carbon|null $processed_at
+ * @property Carbon|null $processed_at
+ * @property string $source
  */
 class WebhookEvent extends Model
 {
@@ -20,6 +22,8 @@ class WebhookEvent extends Model
      * @var array<int, string>
      */
     protected $guarded = [];
+
+    protected $attributes = ['source' => 'webhook'];
 
     /**
      * The attributes that should be cast.

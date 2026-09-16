@@ -170,6 +170,17 @@ class PastDueRetryTest extends TestCase
 
         $this->artisan('cashier-nets:retry-past-due')->assertExitCode(0);
 
+        $attempt = $subscription->transactions()->where('status', Transaction::STATUS_PENDING)->firstOrFail();
+        Http::fake([
+            'https://test.api.dibspayment.eu/v1/payments/pay_retry' => Http::response(['payment' => [
+                'paymentId' => 'pay_retry',
+                'subscription' => ['id' => 'sub_retry'],
+                'orderDetails' => ['reference' => $attempt->idempotency_key, 'amount' => 9900, 'currency' => 'DKK'],
+                'summary' => ['chargedAmount' => 9900],
+                'charges' => [['chargeId' => 'charge_retry', 'amount' => 9900, 'created' => '2026-05-17T10:00:00Z']],
+            ]]),
+        ]);
+
         $this->postJson('/nets/webhook', [
             'id' => 'evt_retry_charge_created',
             'event' => 'payment.charge.created.v2',
@@ -196,7 +207,7 @@ class PastDueRetryTest extends TestCase
      * Create a past-due subscription with a history of failed charge attempts.
      *
      * @param  array<string, mixed>  $attributes
-     * @param  array<int, \Illuminate\Support\Carbon>  $failedAt
+     * @param  array<int, Carbon>  $failedAt
      */
     protected function createPastDueSubscription(array $attributes = [], array $failedAt = []): Subscription
     {
@@ -206,7 +217,7 @@ class PastDueRetryTest extends TestCase
             'password' => 'secret',
         ]);
 
-        /** @var \Udviklr\CashierNets\Subscription $subscription */
+        /** @var Subscription $subscription */
         $subscription = $user->netsSubscriptions()->create(array_merge([
             'type' => Subscription::DEFAULT_TYPE,
             'nets_subscription_id' => 'sub_'.$user->id,

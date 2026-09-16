@@ -17,8 +17,8 @@ use Udviklr\CashierNets\Events\RefundInitiated;
 use Udviklr\CashierNets\Events\WebhookHandled;
 use Udviklr\CashierNets\Events\WebhookReceived;
 use Udviklr\CashierNets\WebhookEvent;
-use Udviklr\CashierNets\Webhooks\WebhookHandlingResult;
 use Udviklr\CashierNets\Webhooks\WebhookHandler;
+use Udviklr\CashierNets\Webhooks\WebhookHandlingResult;
 use Udviklr\CashierNets\Webhooks\WebhookPayload;
 
 class WebhookController extends Controller
@@ -46,7 +46,9 @@ class WebhookController extends Controller
                 'payload' => $payload,
             ])->save();
 
-            return DB::transaction(fn () => $this->process($event, $handler, $payload));
+            $payment = $handler->prepare($payload);
+
+            return DB::transaction(fn () => $this->process($event, $handler, $payload, $payment));
         }
 
         // Claim the event row before the processing transaction so a failed
@@ -58,7 +60,9 @@ class WebhookController extends Controller
             'payload' => $payload,
         ]);
 
-        return DB::transaction(function () use ($event, $handler, $payload) {
+        $payment = $event->processed() ? null : $handler->prepare($payload);
+
+        return DB::transaction(function () use ($event, $handler, $payload, $payment) {
             $query = $event->newQuery();
             $query->lockForUpdate();
 
@@ -70,7 +74,7 @@ class WebhookController extends Controller
                 return response()->json(['received' => true, 'duplicate' => true]);
             }
 
-            return $this->process($event, $handler, $payload);
+            return $this->process($event, $handler, $payload, $payment);
         });
     }
 
@@ -83,9 +87,9 @@ class WebhookController extends Controller
      *
      * @param  array<string, mixed>  $payload
      */
-    protected function process(WebhookEvent $event, WebhookHandler $handler, array $payload)
+    protected function process(WebhookEvent $event, WebhookHandler $handler, array $payload, ?array $payment = null)
     {
-        $result = $handler->handle($payload);
+        $result = $handler->handle($payload, $event, $payment);
 
         $this->dispatchTypedWebhookEvent($result, $event);
 
@@ -139,6 +143,9 @@ class WebhookController extends Controller
      */
     protected function dispatchTypedWebhookEvent(WebhookHandlingResult $result, WebhookEvent $webhookEvent): void
     {
+        if (! $result->dispatchTypedEvent) {
+            return;
+        }
         $class = $this->typedWebhookEventClass($result->payload);
 
         if ($class === null) {
