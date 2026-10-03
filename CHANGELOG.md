@@ -1,5 +1,9 @@
 # Release Notes
 
+## [1.4.1] - 2026-10-03
+
+- Allow `guzzlehttp/guzzle` `^8.0` alongside `^7.2`. Laravel only accepts Guzzle 8 from 13.34 onward, so Laravel 10–12 apps stay on Guzzle 7. If your app uses Guzzle directly, pin it or review the Guzzle 8 upgrade notes before running `composer update`.
+
 ## [1.4.0] - 2026-09-16
 
 ### Added
