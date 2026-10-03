@@ -34,7 +34,13 @@ jobs:
         with:
           timeout_minutes: 5
           max_attempts: 5
-          command: composer update --prefer-stable --prefer-dist --no-interaction --no-progress
+          command: >-
+            composer update --prefer-stable --prefer-dist --no-interaction --no-progress
+            --with="illuminate/contracts:^12"
+            --with="illuminate/database:^12"
+            --with="illuminate/http:^12"
+            --with="illuminate/routing:^12"
+            --with="illuminate/support:^12"
 
       - name: Execute type checking
         run: vendor/bin/phpstan --verbose
