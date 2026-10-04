@@ -47,13 +47,13 @@ class ChargeFinalizer
         });
     }
 
-    public function finalizeCharge(Transaction $row, ChargeOutcome $outcome): Transaction
+    public function finalizeCharge(Transaction $row, ChargeOutcome $outcome, bool $updateSubscription = true): Transaction
     {
         if (! in_array($outcome->status, [Transaction::STATUS_SUCCEEDED, Transaction::STATUS_FAILED], true)) {
             throw new InvalidArgumentException('Finalization requires a terminal charge outcome.');
         }
 
-        return $this->withLockedAttempt($row, function (Transaction $row, Subscription $subscription) use ($outcome): Transaction {
+        return $this->withLockedAttempt($row, function (Transaction $row, Subscription $subscription) use ($outcome, $updateSubscription): Transaction {
             $canonical = $this->applyIdentity($row, $outcome->paymentId, $outcome->chargeId);
             if (! $canonical->is($row)) {
                 return $canonical;
@@ -82,7 +82,9 @@ class ChargeFinalizer
             } else {
                 $updates = ['status' => Subscription::STATUS_PAST_DUE, 'failed_at' => $occurredAt];
             }
-            $subscription->forceFill($updates)->save();
+            if ($updateSubscription) {
+                $subscription->forceFill($updates)->save();
+            }
 
             $event = $outcome->webhookEvent;
             $payload = $outcome->webhookPayload;
