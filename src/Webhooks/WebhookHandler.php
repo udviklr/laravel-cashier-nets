@@ -10,6 +10,7 @@ use Udviklr\CashierNets\CashierNets;
 use Udviklr\CashierNets\Charges\ChargeFinalizer;
 use Udviklr\CashierNets\Charges\ChargeOutcome;
 use Udviklr\CashierNets\Charges\ChargeReconciler;
+use Udviklr\CashierNets\Charges\ChargeRecorder;
 use Udviklr\CashierNets\Refund;
 use Udviklr\CashierNets\Subscription;
 use Udviklr\CashierNets\Transaction;
@@ -523,37 +524,9 @@ class WebhookHandler
      */
     protected function recordTransaction(Subscription $subscription, WebhookPayload $payload): Transaction
     {
-        $query = CashierNets::transactionModel()->newQuery();
-        $row = $payload->chargeId() !== null
-            ? $query->where('nets_charge_id', $payload->chargeId())->first()
-            : $query->where('nets_payment_id', $payload->paymentId())->first();
-        if ($row !== null) {
-            if (($row->nets_subscription_id !== null && $row->nets_subscription_id !== $subscription->nets_subscription_id)
-                || $row->billable_type !== $subscription->billable_type || (string) $row->billable_id !== (string) $subscription->billable_id) {
-                throw new InvalidArgumentException('Webhook transaction belongs to another subscription.');
-            }
-            if ($row->frozen_order !== null) {
-                throw new InvalidArgumentException('A reserved attempt requires retrieved payment validation.');
-            }
-            $row->nets_subscription_id = $row->nets_subscription_id ?? $subscription->nets_subscription_id;
-            if ($payload->amount() !== null && ($row->status === Transaction::STATUS_PENDING || $row->amount === null)) {
-                $row->amount = $payload->amount();
-            }
-            if ($payload->currency() !== null && ($row->status === Transaction::STATUS_PENDING || $row->currency === null)) {
-                $row->currency = $payload->currency();
-            }
-            $row->save();
-
-            return $row;
-        }
-
-        return CashierNets::transactionModel()->newQuery()->create([
-            'billable_type' => $subscription->billable_type, 'billable_id' => $subscription->billable_id,
-            'nets_payment_id' => $payload->paymentId(), 'nets_charge_id' => $payload->chargeId(),
-            'nets_subscription_id' => $subscription->nets_subscription_id,
-            'nets_unscheduled_subscription_id' => $subscription->nets_unscheduled_subscription_id,
-            'status' => Transaction::STATUS_PENDING, 'amount' => $payload->amount(), 'currency' => $payload->currency(),
-        ]);
+        return app(ChargeRecorder::class)->record(
+            $subscription, $payload->paymentId(), $payload->chargeId(), $payload->amount(), $payload->currency(),
+        );
     }
 
     /**
