@@ -1,6 +1,6 @@
 # Release Notes
 
-## [Unreleased]
+## [1.5.0] - 2026-10-16
 
 - Add `Subscription::recordCheckoutCharge()` to retrieve and validate a captured initial checkout payment, making its transaction available for refunds even when the charge webhook is missing. Recording and webhooks share transaction creation and finalization, preserve terminal outcomes, and emit `ChargeSucceeded` once.
 - Checkout recording preserves the mandate's lifecycle and renewal schedule. Provider identity, amount, currency, full-charge evidence and the capture timestamp are required; listener failures roll back local recording for retry. No schema or dependency changes are required.
