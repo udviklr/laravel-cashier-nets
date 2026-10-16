@@ -1,5 +1,10 @@
 # Release Notes
 
+## [Unreleased]
+
+- Add `Subscription::recordCheckoutCharge()` to retrieve and validate a captured initial checkout payment, making its transaction available for refunds even when the charge webhook is missing. Recording and webhooks share transaction creation and finalization, preserve terminal outcomes, and emit `ChargeSucceeded` once.
+- Checkout recording preserves the mandate's lifecycle and renewal schedule. Provider identity, amount, currency, full-charge evidence and the capture timestamp are required; listener failures roll back local recording for retry. No schema or dependency changes are required.
+
 ## [1.4.1] - 2026-10-03
 
 - Allow `guzzlehttp/guzzle` `^8.0` alongside `^7.2`. Laravel only accepts Guzzle 8 from 13.34 onward, so Laravel 10–12 apps stay on Guzzle 7. If your app uses Guzzle directly, pin it or review the Guzzle 8 upgrade notes before running `composer update`.

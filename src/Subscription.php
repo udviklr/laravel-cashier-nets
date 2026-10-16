@@ -16,6 +16,7 @@ use InvalidArgumentException;
 use RuntimeException;
 use Udviklr\CashierNets\Charges\ChargeFinalizer;
 use Udviklr\CashierNets\Charges\ChargeReconciler;
+use Udviklr\CashierNets\Charges\CheckoutChargeRecorder;
 use Udviklr\CashierNets\Exceptions\ChargeBlockedException;
 use Udviklr\CashierNets\Exceptions\NetsException;
 use Udviklr\CashierNets\Exceptions\UncertainChargeOutcomeException;
@@ -100,6 +101,14 @@ class Subscription extends Model
     public function transactions(): HasMany
     {
         return $this->hasMany(CashierNets::$transactionModel, 'nets_subscription_id', 'nets_subscription_id');
+    }
+
+    /**
+     * Retrieve and record the initial checkout charge without changing the mandate's lifecycle or renewal schedule.
+     */
+    public function recordCheckoutCharge(): Transaction
+    {
+        return app(CheckoutChargeRecorder::class)->record($this);
     }
 
     /**

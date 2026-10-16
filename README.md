@@ -237,6 +237,21 @@ For local development, expose your Laravel app with a secure HTTPS tunnel such a
 
 Hosted checkout return routes are application-owned. Nets may return the payment identifier as lowercase `paymentid`, so accept both `paymentid` and `paymentId` before calling `syncNetsSubscriptionFromPayment()`. For session-authenticated callbacks from hosted checkout, prefer `SESSION_SAME_SITE=lax`.
 
+### Recording a captured checkout charge
+
+`syncNetsSubscriptionFromPayment()` synchronizes the mandate; it does not record its initial payment. After synchronizing an authorized customer's checkout, use:
+
+```php
+$subscription = $user->syncNetsSubscriptionFromPayment($paymentId);
+$transaction = $subscription->recordCheckoutCharge();
+```
+
+`recordCheckoutCharge()` retrieves the subscription's stored checkout payment from Nexi and verifies its payment ID, mandate, amount and currency. It requires one matching full charge and its provider timestamp. An incomplete or ambiguous charge throws `CheckoutFinalizationException`; identity mismatches throw `InvalidArgumentException`, and transport/API failures propagate. None of these failures creates a local transaction or sends a new charge.
+
+The returned transaction supports the existing `refund()` API even when the charge webhook was missed. Recording uses the same transaction recorder and finalizer as webhooks: repeated calls and either webhook order retain one transaction, one `ChargeSucceeded` event, the original payment time and any completed refund. A newly recorded outcome has a synthetic webhook event with source `checkout`; synchronous listener failures roll back recording so it can be retried.
+
+This recording operation leaves the subscription's lifecycle and renewal schedule unchanged, including canceled/expired mandates. Application listeners still run and must preserve their own ended-agreement safeguards. For recovery of an ended subscription, call `recordCheckoutCharge()` directly on that subscription; do not call the activating `syncNetsSubscriptionFromPayment()` again. The stored mandate, amount and currency must match the initial checkout; this API does not infer historical prices from a changed subscription or cover split captures or zero-value mandate setup.
+
 ## Renewals
 
 The package owns local renewal scheduling through `nets_subscriptions.next_charge_at`. Nets subscriptions use day-based intervals, so align any local billing or access period with the same interval days value you sent through `intervalDays()`.
