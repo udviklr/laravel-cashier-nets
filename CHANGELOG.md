@@ -1,5 +1,9 @@
 # Release Notes
 
+## [Unreleased]
+
+- Drop support for Laravel 10 and 11, which no longer receive security fixes from Laravel. The package now requires Laravel 12 or 13 and PHP 8.2 or newer. Composer will not install this release in a Laravel 10 or 11 application; those applications stay on 1.5.x.
+
 ## [1.5.0] - 2026-10-16
 
 - Add `Subscription::recordCheckoutCharge()` to retrieve and validate a captured initial checkout payment, making its transaction available for refunds even when the charge webhook is missing. Recording and webhooks share transaction creation and finalization, preserve terminal outcomes, and emit `ChargeSucceeded` once.

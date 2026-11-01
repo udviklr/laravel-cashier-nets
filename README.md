@@ -27,7 +27,9 @@ The package focuses on reusable subscription plumbing: creating hosted or embedd
 
 ## Version Support
 
-Laravel Cashier Nets supports PHP `^8.1` and Laravel `10.x`, `11.x`, `12.x`, and `13.x`. The test matrix follows Laravel's own PHP requirements, so Laravel 10 is tested on PHP 8.1-8.3, Laravel 11 on PHP 8.2-8.4, Laravel 12 on PHP 8.2-8.5, and Laravel 13 on PHP 8.3-8.5.
+Laravel Cashier Nets supports PHP `^8.2` and Laravel `12.x` and `13.x`. The test matrix follows Laravel's own PHP requirements, so Laravel 12 is tested on PHP 8.2-8.5 and Laravel 13 on PHP 8.3-8.5.
+
+Laravel 10 and 11 no longer receive security fixes from Laravel, so they are not supported. Applications still on them can use version 1.5.x of this package.
 
 ## Installation
 
