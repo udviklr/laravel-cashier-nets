@@ -18,14 +18,12 @@ The package also loads its bundled migrations automatically. Publishing the migr
 
 ## Version Support
 
-Laravel Cashier Nets supports PHP `^8.1` and Laravel `10.x`, `11.x`, `12.x`, and `13.x`.
+Laravel Cashier Nets supports PHP `^8.2` and Laravel `12.x` and `13.x`.
 
 The test matrix follows Laravel's PHP requirements:
 
 | Laravel | PHP |
 | --- | --- |
-| 10.x | 8.1-8.3 |
-| 11.x | 8.2-8.4 |
 | 12.x | 8.2-8.5 |
 | 13.x | 8.3-8.5 |
 

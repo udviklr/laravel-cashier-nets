@@ -22,7 +22,7 @@ The package includes this route URL in the webhook notifications attached to cre
 
 Nets webhooks are external server-to-server requests, so they do not include Laravel CSRF tokens. Exclude the webhook route from CSRF protection.
 
-For Laravel 11 and newer applications, configure this in `bootstrap/app.php`:
+Configure this in `bootstrap/app.php`:
 
 ```php
 use Illuminate\Foundation\Configuration\Middleware;
@@ -36,7 +36,7 @@ use Illuminate\Foundation\Configuration\Middleware;
 
 If you changed `cashier-nets.route_prefix`, update the excluded path to match.
 
-For Laravel 10 applications, add the path to the `$except` array on your application's CSRF middleware:
+If your application was upgraded from Laravel 10 or earlier and still uses the older structure with `app/Http/Middleware/VerifyCsrfToken.php`, add the path to that middleware's `$except` array instead:
 
 ```php
 protected $except = [
