@@ -68,6 +68,22 @@ class CheckoutChargeTest extends ChargeTestCase
         Event::assertDispatchedTimes(ChargeSucceeded::class, 1);
     }
 
+    public function test_a_recorded_checkout_charge_can_be_replayed_after_the_recurring_amount_changed(): void
+    {
+        $subscription = $this->checkout();
+        $this->fakeCheckout($subscription);
+        $transaction = $subscription->recordCheckoutCharge();
+        $subscription->forceFill(['amount' => 2000])->save();
+
+        $replayed = $subscription->recordCheckoutCharge();
+
+        $this->assertTrue($transaction->is($replayed));
+        $this->assertSame(1000, $replayed->amount);
+        $this->assertSame(2000, $subscription->fresh()->amount);
+        $this->assertDatabaseCount('nets_transactions', 1);
+        Event::assertDispatchedTimes(ChargeSucceeded::class, 1);
+    }
+
     #[TestWith(['canceled'])]
     #[TestWith(['expired'])]
     #[TestWith(['paused'])]

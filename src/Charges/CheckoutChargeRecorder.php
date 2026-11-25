@@ -37,16 +37,22 @@ class CheckoutChargeRecorder
                 throw new InvalidArgumentException('Checkout recording requires the original payment, billable, mandate, amount and currency.');
             }
 
+            // A recorded checkout charge keeps the amount it was verified
+            // against, so it can be replayed after the recurring amount changed.
+            $recorded = $locked->transactions()->where('nets_payment_id', $paymentId)->first();
+            $amount = $recorded->amount ?? $locked->amount;
+            $currency = $recorded->currency ?? $locked->currency;
+
             $expected = CashierNets::transactionModel()->newInstance([
                 'nets_payment_id' => $paymentId, 'nets_subscription_id' => $locked->nets_subscription_id,
-                'amount' => $locked->amount, 'currency' => $locked->currency,
+                'amount' => $amount, 'currency' => $currency,
             ]);
             $outcome = $this->reconciler->outcomeFromPayment($expected, $payment, 'checkout');
             if ($outcome === null || $outcome->status !== Transaction::STATUS_SUCCEEDED || $outcome->providerOccurredAt === null) {
                 throw new CheckoutFinalizationException('The checkout has no unambiguous full charge with a provider timestamp.');
             }
 
-            $row = $this->recorder->record($locked, $paymentId, $outcome->chargeId, $locked->amount, $locked->currency);
+            $row = $this->recorder->record($locked, $paymentId, $outcome->chargeId, $amount, $currency);
             $this->reconciler->validateIdentity($row, $payment);
 
             return $this->finalizer->finalizeCharge($row, $outcome, updateSubscription: false);

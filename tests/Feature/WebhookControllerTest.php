@@ -7,6 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Orchestra\Testbench\Concerns\WithLaravelMigrations;
+use PHPUnit\Framework\Attributes\TestWith;
 use RuntimeException;
 use Tests\TestCase;
 use Udviklr\CashierNets\Events\ChargeFailed;
@@ -265,6 +266,28 @@ class WebhookControllerTest extends TestCase
                 && $event->subscription?->is($subscription)
                 && $event->subscription?->status === Subscription::STATUS_PENDING;
         });
+    }
+
+    #[TestWith([4900, 'EUR', 4900, 'EUR'])]
+    #[TestWith([null, null, 9900, 'DKK'])]
+    public function test_checkout_completed_only_fills_a_missing_amount_once_the_subscription_is_activated(
+        ?int $storedAmount, ?string $storedCurrency, int $amount, string $currency,
+    ): void {
+        $subscription = $this->createSubscription([
+            'type' => 'main',
+            'nets_payment_id' => 'pay_123',
+            'nets_subscription_id' => 'sub_123',
+            'status' => Subscription::STATUS_ACTIVE,
+            'amount' => $storedAmount,
+            'currency' => $storedCurrency,
+        ]);
+
+        $this->postJson('/nets/webhook', $this->checkoutCompletedPayload())->assertOk();
+
+        $subscription->refresh();
+
+        $this->assertSame($amount, $subscription->amount);
+        $this->assertSame($currency, $subscription->currency);
     }
 
     public function test_it_records_subscription_identifiers_from_payment_created_webhooks(): void
