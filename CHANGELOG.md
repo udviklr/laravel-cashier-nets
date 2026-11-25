@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 - Drop support for Laravel 10 and 11, which no longer receive security fixes from Laravel. The package now requires Laravel 12 or 13 and PHP 8.2 or newer. Composer will not install this release in a Laravel 10 or 11 application; those applications stay on 1.5.x.
+- A `payment.checkout.completed` webhook sets a subscription's amount and currency only while the subscription is pending, or when the value is still missing. After activation the recurring amount belongs to the application, so a late or replayed event no longer undoes a price change.
+- `recordCheckoutCharge()` can be repeated after the subscription's amount has changed: a checkout charge that is already recorded is verified against its recorded amount and currency. The first recording must still match the subscription.
 
 ## [1.5.0] - 2026-10-16
 

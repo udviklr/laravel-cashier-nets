@@ -109,6 +109,8 @@ Schedule::command('cashier-nets:charge-due')->everyTenMinutes();
 
 The command attempts each due subscription independently. It returns a failure exit code if any charge attempt fails.
 
+Each renewal charges the subscription's stored `amount`. The checkout sets it; to change the price of later renewals, update `amount` on the subscription. Checkout events never overwrite it once the subscription has left `pending`.
+
 ## Manual Charges
 
 You may charge a subscription manually:

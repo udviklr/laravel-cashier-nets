@@ -79,14 +79,17 @@ class WebhookHandler
             $updates['status'] = Subscription::STATUS_ACTIVE;
         }
 
+        // The checkout sets the recurring amount once. After activation it
+        // belongs to the application, which may have changed the price, so a
+        // late or replayed event only fills a missing value.
         $amount = $payload->amount();
         $currency = $payload->currency();
 
-        if ($amount !== null) {
+        if ($amount !== null && ($subscription->pending() || $subscription->amount === null)) {
             $updates['amount'] = $amount;
         }
 
-        if ($currency !== null) {
+        if ($currency !== null && ($subscription->pending() || $subscription->currency === null)) {
             $updates['currency'] = $currency;
         }
 
