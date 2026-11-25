@@ -25,7 +25,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 {
     public function test_a_failing_reconciliation_listener_rolls_back_and_can_retry_the_same_outcome(): void
     {
-        $row = $this->attempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'created_at' => now()->subHour()]);
+        $row = $this->pendingAttempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'created_at' => now()->subHour()]);
         $this->fakePayment($row);
         Event::swap(new Dispatcher($this->app));
         $shouldFail = true;
@@ -51,10 +51,10 @@ class ChargeReconciliationTest extends ChargeTestCase
     #[DataProvider('uniqueIdentifiers')]
     public function test_database_constraints_reject_duplicate_attempt_and_charge_identities(string $column): void
     {
-        $this->attempt($this->subscription(), [$column => 'duplicate']);
+        $this->pendingAttempt($this->subscription(), [$column => 'duplicate']);
         $other = $this->subscription();
         $this->expectException(QueryException::class);
-        $this->attempt($other, [$column => 'duplicate']);
+        $this->pendingAttempt($other, [$column => 'duplicate']);
     }
 
     public static function uniqueIdentifiers(): array
@@ -65,7 +65,7 @@ class ChargeReconciliationTest extends ChargeTestCase
     public function test_status_discovery_finalizes_once_with_provider_time_and_the_existing_event_shape(): void
     {
         $subscription = $this->subscription();
-        $row = $this->attempt($subscription);
+        $row = $this->pendingAttempt($subscription);
         $payment = $this->payment($row);
         Http::fake(function (Request $request) use ($row, $payment) {
             if (str_ends_with($request->url(), '/charges/status')) {
@@ -104,7 +104,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_incomplete_status_with_verified_ids_moves_to_awaiting_webhook(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         Http::fake(fn (Request $request) => Http::response(str_ends_with($request->url(), '/charges/status')
             ? ['completed' => false, 'paymentId' => self::PAYMENT_ID, 'chargeId' => self::CHARGE_ID]
             : $this->payment($row, false)));
@@ -121,7 +121,7 @@ class ChargeReconciliationTest extends ChargeTestCase
     #[DataProvider('unresolvedStatusResults')]
     public function test_inconclusive_status_never_releases_the_hold_and_alerts_once_from_creation(string $kind): void
     {
-        $row = $this->attempt($this->subscription(), ['created_at' => now()->subMinutes(61), 'uncertain_at' => now()]);
+        $row = $this->pendingAttempt($this->subscription(), ['created_at' => now()->subMinutes(61), 'uncertain_at' => now()]);
         Http::fake(fn () => match ($kind) {
             'timeout' => throw new ConnectionException('Timed out'),
             'incomplete' => Http::response(['completed' => false]),
@@ -145,7 +145,7 @@ class ChargeReconciliationTest extends ChargeTestCase
     #[DataProvider('paymentStates')]
     public function test_stale_identified_rows_need_terminal_payment_evidence(string $state): void
     {
-        $row = $this->attempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null, 'created_at' => now()->subMinutes(61)]);
+        $row = $this->pendingAttempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null, 'created_at' => now()->subMinutes(61)]);
         $this->fakePayment($row, $state === 'complete', $state === 'pending' ? ['charges' => [['chargeId' => self::CHARGE_ID, 'amount' => $row->amount, 'status' => 'pending']]] : []);
 
         $this->artisan('cashier-nets:reconcile-charges')->assertExitCode(0);
@@ -169,7 +169,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_manual_payment_resolution_rejects_a_previous_renewal_without_any_force_bypass(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $this->fakePayment($row, true, ['orderDetails' => ['reference' => 'previous-renewal-key']]);
 
         $this->artisan('cashier-nets:resolve-charge', ['transaction' => $row->id, '--payment-id' => self::PAYMENT_ID])->assertExitCode(1);
@@ -180,7 +180,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_manual_payment_resolution_uses_verified_payment_without_status_discovery(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $this->fakePayment($row);
 
         $this->artisan('cashier-nets:resolve-charge', ['transaction' => $row->id, '--payment-id' => self::PAYMENT_ID])->assertExitCode(0);
@@ -192,7 +192,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_an_identified_empty_payment_needs_operator_confirmation_and_a_reason(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $this->fakePayment($row, false);
         $options = ['transaction' => $row->id, '--payment-id' => self::PAYMENT_ID];
 
@@ -232,7 +232,7 @@ class ChargeReconciliationTest extends ChargeTestCase
     public function test_operator_failure_confirmation_cannot_release_an_identified_pending_charge(array $options): void
     {
         $subscription = $this->subscription();
-        $row = $this->attempt($subscription, ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null]);
+        $row = $this->pendingAttempt($subscription, ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null]);
         $before = $row->fresh()->getAttributes();
         $nextChargeAt = $subscription->next_charge_at->toIso8601String();
         if (isset($options['--payment-id'])) {
@@ -260,7 +260,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_failure_confirmation_rechecks_the_charge_id_after_locking_a_stale_attempt(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $row->newQuery()->whereKey($row->id)->update(['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null]);
         $this->assertNull($row->nets_charge_id);
 
@@ -279,8 +279,8 @@ class ChargeReconciliationTest extends ChargeTestCase
     public function test_an_already_owned_charge_cancels_the_held_duplicate_without_second_subscription_effects(): void
     {
         $subscription = $this->subscription();
-        $canonical = $this->attempt($subscription, ['status' => Transaction::STATUS_SUCCEEDED, 'nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'billed_at' => now()->subHour()]);
-        $held = $this->attempt($subscription);
+        $canonical = $this->pendingAttempt($subscription, ['status' => Transaction::STATUS_SUCCEEDED, 'nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'billed_at' => now()->subHour()]);
+        $held = $this->pendingAttempt($subscription);
         $before = $subscription->next_charge_at->toIso8601String();
         $this->fakePayment($held);
 
@@ -294,8 +294,8 @@ class ChargeReconciliationTest extends ChargeTestCase
     public function test_a_webhook_can_supersede_a_held_attempt_when_a_legacy_row_already_owns_the_charge(): void
     {
         $subscription = $this->subscription();
-        $canonical = $this->attempt($subscription, ['status' => Transaction::STATUS_SUCCEEDED, 'nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'frozen_order' => null]);
-        $held = $this->attempt($subscription);
+        $canonical = $this->pendingAttempt($subscription, ['status' => Transaction::STATUS_SUCCEEDED, 'nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'frozen_order' => null]);
+        $held = $this->pendingAttempt($subscription);
         $this->fakePayment($held);
 
         $this->deliver($this->webhook($held))->assertOk();
@@ -307,7 +307,7 @@ class ChargeReconciliationTest extends ChargeTestCase
     public function test_alerting_does_not_depend_on_the_webhook_grace_or_successful_identity_verification(): void
     {
         config(['cashier-nets.reconcile.alert_after_minutes' => 5, 'cashier-nets.reconcile.webhook_grace_minutes' => 30]);
-        $row = $this->attempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null, 'created_at' => now()->subMinutes(6)]);
+        $row = $this->pendingAttempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'uncertain_at' => null, 'created_at' => now()->subMinutes(6)]);
         $this->artisan('cashier-nets:reconcile-charges')->assertExitCode(0);
         Event::assertDispatchedTimes(ChargeReconciliationStalled::class, 1);
         Http::assertNothingSent();
@@ -321,7 +321,7 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_a_verified_payment_decline_uses_the_existing_event_and_preserves_its_code_on_manual_confirmation(): void
     {
-        $row = $this->attempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'created_at' => now()->subHour()]);
+        $row = $this->pendingAttempt($this->subscription(), ['nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID, 'created_at' => now()->subHour()]);
         $this->fakePayment($row, false, ['charges' => [[
             'chargeId' => self::CHARGE_ID, 'amount' => $row->amount, 'status' => 'failed',
             'error' => ['code' => '14', 'message' => 'Declined'],
@@ -339,9 +339,9 @@ class ChargeReconciliationTest extends ChargeTestCase
 
     public function test_uncertain_listing_includes_held_and_stale_identified_rows_only(): void
     {
-        $held = $this->attempt($this->subscription());
-        $stale = $this->attempt($this->subscription(), ['nets_charge_id' => self::CHARGE_ID, 'created_at' => now()->subMinutes(31)]);
-        $fresh = $this->attempt($this->subscription(), ['uncertain_at' => null, 'created_at' => now()]);
+        $held = $this->pendingAttempt($this->subscription());
+        $stale = $this->pendingAttempt($this->subscription(), ['nets_charge_id' => self::CHARGE_ID, 'created_at' => now()->subMinutes(31)]);
+        $fresh = $this->pendingAttempt($this->subscription(), ['uncertain_at' => null, 'created_at' => now()]);
 
         $this->withoutMockingConsoleOutput();
         $this->assertSame(0, $this->artisan('cashier-nets:uncertain-charges'));
