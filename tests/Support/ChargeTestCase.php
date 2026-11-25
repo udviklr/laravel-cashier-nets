@@ -62,7 +62,7 @@ abstract class ChargeTestCase extends TestCase
         ], $attributes));
     }
 
-    protected function attempt(Subscription $subscription, array $attributes = []): Transaction
+    protected function pendingAttempt(Subscription $subscription, array $attributes = []): Transaction
     {
         $key = $attributes['idempotency_key'] ?? 'attempt-'.$subscription->id.'-'.Transaction::query()->count();
         $order = $subscription->chargePayload($subscription->amount, $subscription->currency, ['reference' => 'readable-line'])['order'];

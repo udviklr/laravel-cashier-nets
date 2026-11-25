@@ -98,9 +98,9 @@ class UncertainChargeTest extends ChargeTestCase
     {
         $subscription = $this->subscription(['status' => $status]);
         if ($status === Subscription::STATUS_PAST_DUE) {
-            $this->attempt($subscription, ['status' => Transaction::STATUS_FAILED, 'created_at' => now()->subDays(2), 'billed_at' => now()->subDays(2)]);
+            $this->pendingAttempt($subscription, ['status' => Transaction::STATUS_FAILED, 'created_at' => now()->subDays(2), 'billed_at' => now()->subDays(2)]);
         }
-        $row = $this->attempt($subscription, match ($kind) {
+        $row = $this->pendingAttempt($subscription, match ($kind) {
             'fresh' => ['uncertain_at' => null, 'created_at' => now()],
             'with_ids' => ['uncertain_at' => null, 'nets_payment_id' => self::PAYMENT_ID, 'nets_charge_id' => self::CHARGE_ID],
             default => [],
@@ -182,7 +182,7 @@ class UncertainChargeTest extends ChargeTestCase
     public function test_a_terminal_key_cannot_be_reopened_or_reused_by_another_subscription(): void
     {
         $subscription = $this->subscription();
-        $row = $this->attempt($subscription, ['status' => Transaction::STATUS_SUCCEEDED, 'uncertain_at' => null]);
+        $row = $this->pendingAttempt($subscription, ['status' => Transaction::STATUS_SUCCEEDED, 'uncertain_at' => null]);
         Http::fake();
         $this->assertTrue($row->is($subscription->charge(['idempotency_key' => $row->idempotency_key])));
         $this->assertSame(Transaction::STATUS_SUCCEEDED, $row->fresh()->status);
@@ -289,7 +289,7 @@ class UncertainChargeTest extends ChargeTestCase
     public function test_a_failure_webhook_upgrades_an_http_fallback_code_without_counting_or_emitting_again(): void
     {
         $subscription = $this->subscription(['status' => Subscription::STATUS_PAST_DUE]);
-        $row = $this->attempt($subscription, ['status' => Transaction::STATUS_FAILED, 'failure_code' => '402', 'uncertain_at' => null]);
+        $row = $this->pendingAttempt($subscription, ['status' => Transaction::STATUS_FAILED, 'failure_code' => '402', 'uncertain_at' => null]);
         $this->fakePayment($row, false);
 
         $this->deliver($this->webhook($row, false))->assertOk();
@@ -303,7 +303,7 @@ class UncertainChargeTest extends ChargeTestCase
     {
         foreach ([true, false] as $succeeded) {
             $subscription = $this->subscription();
-            $row = $this->attempt($subscription);
+            $row = $this->pendingAttempt($subscription);
             $this->fakePayment($row, $succeeded);
             $payload = $this->webhook($row, $succeeded);
             unset($payload['data']['subscriptionId']);
@@ -323,7 +323,7 @@ class UncertainChargeTest extends ChargeTestCase
 
     public function test_payment_created_supplies_identity_without_releasing_a_held_attempt(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $this->fakePayment($row, false);
         $payload = $this->webhook($row, false, ['event' => 'payment.created']);
         unset($payload['data']['error']);
@@ -339,7 +339,7 @@ class UncertainChargeTest extends ChargeTestCase
     public function test_late_payment_created_and_success_events_cannot_reopen_a_failed_attempt(): void
     {
         $subscription = $this->subscription(['status' => Subscription::STATUS_PAST_DUE]);
-        $row = $this->attempt($subscription, ['status' => Transaction::STATUS_FAILED, 'uncertain_at' => null, 'failure_code' => '14', 'billed_at' => now()->subHour()]);
+        $row = $this->pendingAttempt($subscription, ['status' => Transaction::STATUS_FAILED, 'uncertain_at' => null, 'failure_code' => '14', 'billed_at' => now()->subHour()]);
         $this->fakePayment($row);
         $this->deliver($this->webhook($row, false, ['event' => 'payment.created']))->assertOk();
         $this->deliver($this->webhook($row))->assertOk();
@@ -353,7 +353,7 @@ class UncertainChargeTest extends ChargeTestCase
 
     public function test_a_charge_event_must_name_a_charge_present_in_the_verified_payment(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $this->fakePayment($row);
         $this->deliver($this->webhook($row, true, ['data' => ['chargeId' => 'unrelated-charge']]))->assertServerError();
         $this->assertTrue($row->fresh()->held());
@@ -364,7 +364,7 @@ class UncertainChargeTest extends ChargeTestCase
     public function test_legacy_checkout_charge_events_still_fill_subscription_ids_and_missing_financial_fields(): void
     {
         $subscription = $this->subscription(['nets_subscription_id' => null, 'nets_payment_id' => self::PAYMENT_ID]);
-        $row = $this->attempt($subscription, ['frozen_order' => null, 'nets_payment_id' => self::PAYMENT_ID,
+        $row = $this->pendingAttempt($subscription, ['frozen_order' => null, 'nets_payment_id' => self::PAYMENT_ID,
             'nets_charge_id' => self::CHARGE_ID, 'amount' => null, 'currency' => null]);
         $payload = $this->webhook($row, true, ['data' => [
             'subscriptionId' => 'sub_from_checkout_charge', 'amount' => ['amount' => 1000, 'currency' => 'DKK'],
@@ -382,7 +382,7 @@ class UncertainChargeTest extends ChargeTestCase
     #[DataProvider('identityMismatches')]
     public function test_a_provider_payment_with_mismatched_identity_cannot_adopt_an_attempt(string $path, mixed $value): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         $payment = $this->payment($row);
         data_set($payment, 'payment.'.$path, $value);
         Http::fake(['*' => Http::response($payment)]);
@@ -400,7 +400,7 @@ class UncertainChargeTest extends ChargeTestCase
 
     public function test_an_unavailable_payment_get_leaves_the_webhook_retryable_without_creating_an_orphan(): void
     {
-        $row = $this->attempt($this->subscription());
+        $row = $this->pendingAttempt($this->subscription());
         Http::fake(['*' => Http::response([], 503)]);
         $payload = $this->webhook($row);
 
@@ -417,7 +417,7 @@ class UncertainChargeTest extends ChargeTestCase
     #[DataProvider('heldStates')]
     public function test_held_state_distinguishes_fresh_payment_only_and_charge_identified_attempts(int $age, bool $uncertain, ?string $chargeId, bool $held): void
     {
-        $row = $this->attempt($this->subscription(), ['created_at' => now()->subSeconds($age), 'uncertain_at' => $uncertain ? now() : null, 'nets_charge_id' => $chargeId, 'nets_payment_id' => self::PAYMENT_ID]);
+        $row = $this->pendingAttempt($this->subscription(), ['created_at' => now()->subSeconds($age), 'uncertain_at' => $uncertain ? now() : null, 'nets_charge_id' => $chargeId, 'nets_payment_id' => self::PAYMENT_ID]);
         $this->assertSame($held, $row->held());
     }
 
