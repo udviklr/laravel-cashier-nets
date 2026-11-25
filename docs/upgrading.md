@@ -11,6 +11,14 @@ Before upgrading to a new release:
 - Run your billing feature tests with `CashierNets::fake()`.
 - Run a sandbox checkout before deploying a billing upgrade to production.
 
+## Upgrading to 1.6.0
+
+Laravel 10 and 11 are no longer supported. The package now requires Laravel 12 or 13, PHP 8.2 or newer and Carbon 3. Composer keeps Laravel 10 and 11 applications on 1.5.x, so upgrade Laravel first to receive this release.
+
+A `payment.checkout.completed` webhook no longer overwrites a subscription's `amount` and `currency` once the subscription has left `pending`; it only fills a missing value. To change the price of later renewals, update `amount` on the subscription.
+
+This release has no migration.
+
 ## Upgrading to 1.4.0
 
 Renewal attempts now remain pending when the provider outcome is uncertain. Before enabling renewal schedules after upgrading:
